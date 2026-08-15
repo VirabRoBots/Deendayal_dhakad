@@ -72,11 +72,19 @@ async def audio_handler(request: web.Request):
         path = request.match_info["path"]
         stream_index = int(request.match_info["stream_index"])
         id, secure_hash = parse_id_hash(path, request)
-        # extract_audio_stream returns an async generator. Passing it as
-        # `body=` streams chunks to the browser as they're produced instead
-        # of waiting for the whole audio track to finish — same pattern
-        # already used by media_streamer() below for video.
-        body = await extract_audio_stream(id, secure_hash, stream_index)
+
+        # ?t=<seconds> tells us where in the video the player currently is,
+        # so extraction can start there instead of always from 0. Defaults
+        # to 0 (start of track) if not given or invalid.
+        start_time = 0.0
+        raw_t = request.rel_url.query.get("t")
+        if raw_t:
+            try:
+                start_time = max(0.0, float(raw_t))
+            except ValueError:
+                start_time = 0.0
+
+        body = await extract_audio_stream(id, secure_hash, stream_index, start_time)
         return web.Response(
             status=200,
             body=body,
@@ -91,8 +99,6 @@ async def audio_handler(request: web.Request):
     except FIleNotFound as e:
         raise web.HTTPNotFound(text=e.message)
     except (AttributeError, BadStatusLine, ConnectionResetError):
-        # Client closed the tab / switched tracks again mid-stream — not a
-        # real error, don't spam the logs.
         pass
     except Exception as e:
         logging.exception("audio_handler error")
