@@ -192,8 +192,10 @@
     </div>
 
     <div class="note">
-      Multi-audio is supported in browser. First track switch may take time while the server prepares audio.
-      For best multi-audio experience use MX Player or VLC.
+      Multi-audio is supported in browser. First track switch, and jumping to a new
+      part of the video while a language is selected, may take a moment while the
+      server prepares audio for that spot. For best multi-audio experience use MX
+      Player or VLC.
     </div>
 
     <footer>© Deendayal Stream · For personal use only</footer>
@@ -202,6 +204,8 @@
   <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
   <script>
     const STREAM_URL = "{{file_url}}";
+    // Must match SEEK_BUCKET_SECONDS in audio_tracks.py
+    const SEEK_BUCKET_SECONDS = 10;
 
     let player = null;
     let fetchedTracks = null;
@@ -209,17 +213,25 @@
     let activeTrackIdx = null;
     let isPreparingAudio = false;
     let wantPlayWhenReady = false;
-    let resumeTime = 0;
     let prepareWatch = null;
     let buffering = false;
     let audioCtx = null;
     let vidGainNode = null;
     let useFallbackMute = false;
 
-    function buildAudioUrl(streamIndex) {
+    // Bumped every time we (re)request audio, so a slow/late response from
+    // an old request can't overwrite a newer one.
+    let audioRequestId = 0;
+    let seekDebounceTimer = null;
+
+    function roundToBucket(t) {
+      return Math.round(t / SEEK_BUCKET_SECONDS) * SEEK_BUCKET_SECONDS;
+    }
+    function buildAudioUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
       const pathParts = u.pathname.split('/').filter(Boolean);
       u.pathname = '/audio/' + streamIndex + '/' + pathParts.join('/');
+      u.searchParams.set('t', String(Math.max(0, atTime || 0)));
       return u.toString();
     }
     function buildTracksUrl() {
@@ -260,7 +272,7 @@
       }
     }
     function updateLoadingUI() {
-      if (isPreparingAudio) { showLoadingUI(true, 'Preparing audio track…'); return; }
+      if (isPreparingAudio) { showLoadingUI(true, 'Preparing audio…'); return; }
       if (buffering) { showLoadingUI(true, 'Loading…'); return; }
       showLoadingUI(false);
     }
@@ -320,19 +332,12 @@
         activeAudio.load();
         activeAudio.remove();
       } catch (e) {}
-      activeAudio = null; activeTrackIdx = null;
+      activeAudio = null;
     }
     function syncVolume() {
       if (!activeAudio || !player) return;
       activeAudio.volume = player.volume;
       activeAudio.muted = player.muted;
-    }
-    function syncTime() {
-      const vid = getVideo();
-      if (!activeAudio || !vid || isPreparingAudio) return;
-      if (Math.abs(activeAudio.currentTime - vid.currentTime) > 0.4) {
-        try { activeAudio.currentTime = vid.currentTime; } catch (e) {}
-      }
     }
     function ensureAudioPlaying() {
       const vid = getVideo();
@@ -341,35 +346,44 @@
       if (vid.paused && !activeAudio.paused) activeAudio.pause();
     }
 
-    function switchToTrack(streamIndex) {
+    // Requests audio for `streamIndex` starting at `atTime` (defaults to the
+    // video's current position). Used both for picking a language AND for
+    // re-syncing after the user seeks while a language is already active.
+    function requestAudio(streamIndex, atTime) {
       const vid = getVideo();
       if (!vid) return;
+      const requestedTime = (atTime != null) ? atTime : (vid.currentTime || 0);
+      const bucketStart = roundToBucket(requestedTime);
+      const correction = Math.max(0, requestedTime - bucketStart);
+
       initAudioContext(vid);
-      if (activeTrackIdx === streamIndex && activeAudio && !isPreparingAudio) return;
 
-      resumeTime = vid.currentTime || 0;
-      wantPlayWhenReady = !vid.paused;
-      vid.pause();
+      const myRequestId = ++audioRequestId;
+      const wasPlaying = !vid.paused;
+
       if (activeAudio) { try { activeAudio.pause(); } catch (e) {} }
-
       destroyAudio();
       activeTrackIdx = streamIndex;
       silenceVideo(vid);
       setPreparing(true);
+      wantPlayWhenReady = wasPlaying;
 
-      activeAudio = document.createElement('audio');
-      activeAudio.preload = 'auto';
-      activeAudio.style.display = 'none';
-      document.body.appendChild(activeAudio);
-      activeAudio.src = buildAudioUrl(streamIndex);
-      syncVolume();
+      const audioEl = document.createElement('audio');
+      audioEl.preload = 'auto';
+      audioEl.style.display = 'none';
+      document.body.appendChild(audioEl);
+      audioEl.src = buildAudioUrl(streamIndex, bucketStart);
 
-      activeAudio.addEventListener('canplay', function onCanPlay() {
-        activeAudio.removeEventListener('canplay', onCanPlay);
-        try {
-          activeAudio.currentTime = resumeTime;
-          vid.currentTime = resumeTime;
-        } catch (e) {}
+      audioEl.addEventListener('canplay', function onCanPlay() {
+        audioEl.removeEventListener('canplay', onCanPlay);
+        if (myRequestId !== audioRequestId) {
+          // A newer request superseded this one (user seeked again fast) — drop it.
+          try { audioEl.pause(); audioEl.remove(); } catch (e) {}
+          return;
+        }
+        activeAudio = audioEl;
+        syncVolume();
+        try { activeAudio.currentTime = correction; } catch (e) {}
         setPreparing(false);
         if (wantPlayWhenReady) {
           wantPlayWhenReady = false;
@@ -378,28 +392,39 @@
         }
         markActiveChip(streamIndex);
       });
-      activeAudio.addEventListener('error', function () {
+      audioEl.addEventListener('error', function () {
+        if (myRequestId !== audioRequestId) return;
         setPreparing(false);
         wantPlayWhenReady = false;
         switchToDefault();
         alert('Selected audio track failed. Switched back to default.');
       });
-      activeAudio.load();
+      audioEl.load();
+    }
+
+    // Called when the user seeks while a non-default language is active.
+    // Debounced so dragging the progress bar doesn't fire a request per pixel.
+    function onSeekWhileActive() {
+      if (activeTrackIdx === null) return;
+      if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
+      seekDebounceTimer = setTimeout(function () {
+        const vid = getVideo();
+        if (!vid || activeTrackIdx === null) return;
+        requestAudio(activeTrackIdx, vid.currentTime);
+      }, 450);
     }
 
     function switchToDefault() {
       const vid = getVideo();
-      resumeTime = vid ? (vid.currentTime || 0) : 0;
       const wasPlaying = vid && !vid.paused;
+      audioRequestId++; // invalidate any in-flight request for a language track
       setPreparing(false);
       wantPlayWhenReady = false;
       destroyAudio();
+      activeTrackIdx = null;
       restoreVideoAudio(vid);
       markActiveChip(null);
-      if (vid) {
-        try { vid.currentTime = resumeTime; } catch (e) {}
-        if (wasPlaying) vid.play().catch(function(){});
-      }
+      if (vid && wasPlaying) vid.play().catch(function(){});
     }
 
     function markActiveChip(streamIndex) {
@@ -423,7 +448,7 @@
         b.textContent = trackLabel(track, idx);
         b.onclick = function () {
           if (idx === 0) switchToDefault();
-          else switchToTrack(track.index);
+          else requestAudio(track.index);
         };
         panel.appendChild(b);
       });
@@ -501,19 +526,13 @@
             vid.pause(); wantPlayWhenReady = true; updateLoadingUI();
           }
         });
+        // User jumped to a new spot (dragged progress bar, tapped ahead, etc).
         vid.addEventListener('seeked', function () {
-          if (isPreparingAudio) return;
-          if (activeAudio) {
-            try { activeAudio.currentTime = vid.currentTime; } catch (e) {}
-            ensureAudioPlaying();
-          }
+          onSeekWhileActive();
         });
         vid.addEventListener('pause', function () {
           if (activeAudio && !isPreparingAudio) activeAudio.pause();
         });
-        setInterval(function () {
-          if (activeAudio && vid && !vid.paused && !isPreparingAudio) syncTime();
-        }, 2000);
       }
     });
   </script>
