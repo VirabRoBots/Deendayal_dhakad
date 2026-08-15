@@ -18,14 +18,26 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 _file_cache = {}
 _extract_locks = {}
-# Tracks an in-progress streamed extraction so concurrent requests for the
-# SAME track can attach to it instead of starting a second ffmpeg process.
+# In-progress streamed extractions, keyed by (msg_id, stream_index, bucket_start),
+# so concurrent requests for the SAME segment attach to one ffmpeg job instead
+# of starting a second one.
 _inflight = {}
 
 TG_CHUNK_LIMIT = 1024 * 1024
 PROBE_BYTES = 4 * 1024 * 1024
 CACHE_MAX_AGE_SECONDS = 12 * 60 * 60
 CACHE_MIN_FREE_BYTES = 1 * 1024 ** 3
+
+# Seeking is rounded to the nearest bucket so that repeated/nearby seeks to
+# roughly the same spot reuse a cached segment instead of each starting a
+# fresh extraction. Must match SEEK_BUCKET_SECONDS in the player's JS.
+SEEK_BUCKET_SECONDS = 10
+
+
+def _round_start(start_time: float) -> int:
+    if not start_time or start_time < 0:
+        return 0
+    return int(round(start_time / SEEK_BUCKET_SECONDS) * SEEK_BUCKET_SECONDS)
 
 
 def _meta(msg_id: int) -> dict:
@@ -105,31 +117,35 @@ async def get_tracks(msg_id: int, secure_hash: str) -> list:
     return tracks
 
 
-def _cached_audio_path(msg_id: int, stream_index: int) -> Path:
-    return TEMP_DIR / f"{msg_id}_track{stream_index}.aac"
+def _cached_audio_path(msg_id: int, stream_index: int, bucket_start: int) -> Path:
+    if bucket_start <= 0:
+        return TEMP_DIR / f"{msg_id}_track{stream_index}.aac"
+    return TEMP_DIR / f"{msg_id}_track{stream_index}_seek{bucket_start}.aac"
 
 
 async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int, start_time: float = 0.0):
     """
-    Returns an async generator of audio bytes.
+    Returns an async generator of audio bytes, beginning at `start_time`
+    (seconds) into the track.
 
-    - If already cached on disk, serves straight from the cache file (fast path).
-    - Otherwise, starts ffmpeg, streams the source video into it, and yields
-      audio bytes to the CALLER as ffmpeg produces them (so playback can start
-      before extraction finishes), while ffmpeg simultaneously writes those
-      same bytes to a temp file on disk. When done, the temp file is renamed
-      into the cache so the NEXT request for this track is instant.
-    - If a request for this exact track arrives while one is already being
-      extracted, it attaches to the same in-progress job instead of starting
-      a second ffmpeg process.
+    - Each distinct start position is rounded to a 10-second bucket. If that
+      bucket was already extracted before, it's served instantly from cache.
+    - Otherwise, ffmpeg reads the source from the beginning (containers like
+      mkv/mp4 need their header, so we can't skip straight to the middle of
+      the file) and fast-discards audio up to the bucket's timestamp, then
+      starts producing real output from there. That output is streamed to
+      the caller AS IT'S PRODUCED (so playback can start before the whole
+      segment is done) and simultaneously saved to disk for next time.
+    - Concurrent requests for the same bucket attach to one in-progress job
+      instead of each starting a separate ffmpeg process.
     """
-    cache_path = _cached_audio_path(msg_id, stream_index)
+    bucket_start = _round_start(start_time)
+    cache_path = _cached_audio_path(msg_id, stream_index, bucket_start)
     if cache_path.exists():
         return _stream_from_cached_file(cache_path)
 
-    key = (msg_id, stream_index)
+    key = (msg_id, stream_index, bucket_start)
 
-    # Already being extracted by another concurrent request? Attach to it.
     existing = _inflight.get(key)
     if existing is not None:
         return _stream_from_inflight(existing)
@@ -138,7 +154,6 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
     lock = _extract_locks.setdefault(key, asyncio.Lock())
 
     async with lock:
-        # Re-check after acquiring the lock — someone may have just finished.
         if cache_path.exists():
             return _stream_from_cached_file(cache_path)
         existing = _inflight.get(key)
@@ -158,6 +173,15 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-probesize", "2M", "-analyzeduration", "2M",
             "-i", "pipe:0",
+        ]
+        if bucket_start > 0:
+            # Output-seek: ffmpeg reads/parses from the start (required for
+            # piped, non-seekable input) but discards audio packets until it
+            # reaches this timestamp, then starts real encoding. Discarding
+            # is cheap CPU-wise; the real cost is however long it takes the
+            # source bytes up to that point to arrive from Telegram.
+            cmd += ["-ss", str(bucket_start)]
+        cmd += [
             "-map", f"0:{stream_index}",
             "-c:a", "aac", "-b:a", "128k",
             "-f", "adts",
@@ -169,11 +193,6 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-        # ffmpeg writes the ADTS/AAC stream directly to tmp_out (not stdout) —
-        # a valid ADTS stream that's simultaneously readable mid-write via a
-        # stdout pipe is unreliable across ffmpeg builds. Instead we tail-read
-        # tmp_out as ffmpeg writes it, which still lets playback start before
-        # extraction fully finishes.
 
         async def feed_source():
             try:
@@ -186,6 +205,8 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
                         proc.stdin.write(chunk)
                         await proc.stdin.drain()
                     except (ConnectionResetError, BrokenPipeError):
+                        # ffmpeg closed stdin early — e.g. this job was
+                        # superseded and killed. Stop feeding.
                         break
             except Exception as e:
                 logging.error(f"[AudioTracks] extract feed error: {e}")
@@ -234,6 +255,25 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
     return _stream_from_inflight(job)
 
 
+def cancel_inflight(msg_id: int, stream_index: int, start_time: float = None):
+    """
+    Kill in-progress extraction(s) for this track that are no longer wanted
+    (e.g. the user seeked again before the previous extraction finished).
+    If start_time is given, only that bucket's job is cancelled; otherwise
+    every in-progress bucket for this (msg_id, stream_index) is cancelled.
+    """
+    for (m, s, b), job in list(_inflight.items()):
+        if m != msg_id or s != stream_index:
+            continue
+        if start_time is not None and b != _round_start(start_time):
+            continue
+        try:
+            if job["proc"].returncode is None:
+                job["proc"].kill()
+        except Exception:
+            pass
+
+
 def _stream_from_inflight(job: dict):
     """Tail-reads the partial file as ffmpeg writes it, so the client can
     start playing before extraction is fully done."""
@@ -252,7 +292,6 @@ def _stream_from_inflight(job: dict):
                         yield chunk
                         continue
                 if job["done"].is_set():
-                    # Drain whatever is left, then stop.
                     if job["ok"] and job["cache_path"].exists():
                         with open(job["cache_path"], "rb") as f:
                             f.seek(sent)
