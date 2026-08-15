@@ -17,18 +17,16 @@ TEMP_DIR = Path("/tmp/audio_cache")
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 _file_cache = {}
-_download_locks = {}
 _extract_locks = {}
 
 TG_CHUNK_LIMIT = 1024 * 1024
 PROBE_BYTES = 4 * 1024 * 1024
-DOWNLOAD_RETRIES = 2
 CACHE_MAX_AGE_SECONDS = 12 * 60 * 60
 CACHE_MIN_FREE_BYTES = 1 * 1024 ** 3
 
 
 def _meta(msg_id: int) -> dict:
-    return _file_cache.setdefault(msg_id, {"tracks": None, "path": None})
+    return _file_cache.setdefault(msg_id, {"tracks": None})
 
 
 async def _get_file_id(msg_id: int, secure_hash: str):
@@ -104,47 +102,6 @@ async def get_tracks(msg_id: int, secure_hash: str) -> list:
     return tracks
 
 
-async def _download_file_to_temp(msg_id: int, secure_hash: str, file_id) -> Path:
-    lock = _download_locks.setdefault(msg_id, asyncio.Lock())
-    async with lock:
-        entry = _meta(msg_id)
-        if entry["path"] and os.path.exists(entry["path"]):
-            return Path(entry["path"])
-
-        file_name = file_id.file_name or f"{msg_id}.mkv"
-        safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in file_name)[:80]
-        temp_path = TEMP_DIR / f"{msg_id}_{secure_hash}_{safe_name}"
-
-        last_err = None
-        for attempt in range(1, DOWNLOAD_RETRIES + 2):
-            try:
-                logging.info(f"[AudioTracks] Downloading message {msg_id} (attempt {attempt}) -> {temp_path}")
-                message = await DeendayalBot.get_messages(LOG_CHANNEL, msg_id)
-                await DeendayalBot.download_media(message, file_name=str(temp_path))
-
-                if not temp_path.exists() or temp_path.stat().st_size == 0:
-                    raise IOError("downloaded file missing or empty")
-                if file_id.file_size and temp_path.stat().st_size < file_id.file_size:
-                    raise IOError(
-                        f"incomplete download: got {temp_path.stat().st_size} of {file_id.file_size} bytes"
-                    )
-
-                entry["path"] = str(temp_path)
-                return temp_path
-            except Exception as e:
-                last_err = e
-                logging.warning(f"[AudioTracks] download attempt {attempt} failed: {e}")
-                try:
-                    if temp_path.exists():
-                        temp_path.unlink()
-                except Exception:
-                    pass
-                await asyncio.sleep(1.5 * attempt)
-
-        logging.error(f"[AudioTracks] all download attempts failed for {msg_id}: {last_err}")
-        raise FIleNotFound
-
-
 def _cached_audio_path(msg_id: int, stream_index: int) -> Path:
     return TEMP_DIR / f"{msg_id}_track{stream_index}.aac"
 
@@ -158,21 +115,56 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
     lock = _extract_locks.setdefault((msg_id, stream_index), asyncio.Lock())
 
     async with lock:
+        # Another request may have finished extraction while we waited for the lock.
         if cache_path.exists():
             return _stream_from_cached_file(cache_path)
 
-        src_path = await _download_file_to_temp(msg_id, secure_hash, file_id)
+        index, client = _pick_client()
+        streamer = ByteStreamer(client)
+        file_size = file_id.file_size or 0
+        part_count = (
+            max(1, (file_size + TG_CHUNK_LIMIT - 1) // TG_CHUNK_LIMIT)
+            if file_size else 100000
+        )
 
         tmp_out = cache_path.with_suffix(".part.aac")
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-i", str(src_path),
+            "-probesize", "5M", "-analyzeduration", "5M",
+            "-i", "pipe:0",
             "-map", f"0:{stream_index}",
             "-c:a", "aac", "-b:a", "128k",
             "-f", "adts",
             str(tmp_out),
         ]
-        proc = await asyncio.create_subprocess_exec(*cmd, stderr=asyncio.subprocess.PIPE)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        async def feed():
+            try:
+                async for chunk in streamer.yield_file(
+                    file_id, index, 0, 0, TG_CHUNK_LIMIT, part_count, TG_CHUNK_LIMIT
+                ):
+                    if not chunk:
+                        continue
+                    try:
+                        proc.stdin.write(chunk)
+                        await proc.stdin.drain()
+                    except (ConnectionResetError, BrokenPipeError):
+                        # ffmpeg exited early (e.g. it only needed part of the file) — stop feeding.
+                        break
+            except Exception as e:
+                logging.error(f"[AudioTracks] extract feed error: {e}")
+            finally:
+                try:
+                    proc.stdin.close()
+                except Exception:
+                    pass
+
+        await feed()
         _, stderr = await proc.communicate()
 
         if proc.returncode == 0 and tmp_out.exists() and tmp_out.stat().st_size > 0:
@@ -185,13 +177,6 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
             except Exception:
                 pass
             raise FIleNotFound
-
-        try:
-            if src_path.exists():
-                src_path.unlink()
-            _meta(msg_id)["path"] = None
-        except Exception as e:
-            logging.warning(f"[AudioTracks] source cleanup failed: {e}")
 
     return _stream_from_cached_file(cache_path)
 
