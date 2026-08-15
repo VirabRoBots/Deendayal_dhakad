@@ -1,208 +1,521 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Deendayal Dhakad | {{file_name}}</title>
-    <link rel="stylesheet" href="https://unpkg.com/sheryjs/dist/Shery.css" />
-    <link rel="stylesheet" href="https://biisal.github.io/Resources/StreamCSS.css">
-    <link rel="stylesheet" href="https://biisal.github.io/Resources/playerCss.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Josefin+Sans:wght@500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
-        integrity="sha512-z3gLpd7yknf1YoNbCzqRKc4qyor8gaKU1qmn+CShxbuBusANI9QpRohGBreCFkKxLhei6S9CQXFEbbKuqLg0DA=="
-        crossorigin="anonymous" referrerpolicy="no-referrer" />
-    <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deendayal | {{file_name}}</title>
+  <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --cyan: #00f5d4;
+      --violet: #9d6fff;
+      --violet2: #7c3aed;
+      --bg0: #04040f;
+      --bg1: #08081a;
+      --glass: rgba(255,255,255,0.05);
+      --border: rgba(255,255,255,0.09);
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --r: 16px;
+      --font-head: 'Space Grotesk', sans-serif;
+      --font-body: 'DM Sans', sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg0);
+      color: var(--text);
+      font-family: var(--font-body);
+      min-height: 100vh;
+    }
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(ellipse 70% 50% at 15% 5%, rgba(157,111,255,.18) 0%, transparent 55%),
+        radial-gradient(ellipse 60% 45% at 85% 90%, rgba(0,245,212,.12) 0%, transparent 55%);
+      pointer-events: none; z-index: 0;
+    }
+    .wrap { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 16px; }
 
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 0 18px;
+    }
+    .brand {
+      font-family: var(--font-head); font-weight: 700; font-size: 1.25rem;
+      background: linear-gradient(90deg, var(--cyan), var(--violet));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      text-decoration: none;
+    }
+    .live {
+      font-size: 0.75rem; color: var(--cyan);
+      border: 1px solid rgba(0,245,212,.35);
+      padding: 4px 10px; border-radius: 99px;
+    }
+
+    .player-box {
+      position: relative;
+      border-radius: var(--r);
+      overflow: hidden;
+      background: #000;
+      box-shadow: 0 20px 50px rgba(0,0,0,.45);
+      border: 1px solid var(--border);
+    }
+    .plyr { --plyr-color-main: var(--violet2); }
+    .plyr.controls-locked .plyr__controls,
+    .plyr.controls-locked .plyr__control--overlaid {
+      opacity: 0 !important; visibility: hidden !important; pointer-events: none !important;
+    }
+    .seek-blocked .plyr__progress input { pointer-events: none; }
+
+    #mediaLoadingUI {
+      position: absolute; inset: 0; z-index: 9999;
+      background: rgba(4,4,15,.9);
+      display: none; align-items: center; justify-content: center;
+      flex-direction: column; gap: 14px; pointer-events: all;
+    }
+    #mediaLoadingUI.show { display: flex; }
+    .load-ring {
+      width: 46px; height: 46px; border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.12);
+      border-top-color: var(--cyan);
+      animation: spin .85s linear infinite;
+    }
+    .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; letter-spacing: .5px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .file-card {
+      margin-top: 16px;
+      background: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 16px 18px;
+      backdrop-filter: blur(10px);
+    }
+    .file-title {
+      font-family: var(--font-head); font-weight: 600; font-size: 1rem;
+      line-height: 1.4; word-break: break-word; margin-bottom: 6px;
+    }
+    .file-meta { color: var(--muted); font-size: .85rem; }
+
+    .media-bar {
+      margin-top: 14px;
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      background: var(--glass); border: 1px solid var(--border);
+      border-radius: 14px; padding: 12px 14px;
+    }
+    .media-bar .label {
+      font-size: .8rem; color: var(--muted); font-weight: 600;
+      letter-spacing: .4px; margin-right: 4px;
+    }
+    .chip {
+      border: 1px solid var(--border); background: rgba(255,255,255,.04);
+      color: var(--text); border-radius: 99px; padding: 8px 14px;
+      font-size: .82rem; font-weight: 500; cursor: pointer;
+      transition: .15s ease;
+    }
+    .chip:hover { border-color: rgba(157,111,255,.45); background: rgba(157,111,255,.12); }
+    .chip.active {
+      border-color: var(--violet); color: #fff;
+      background: linear-gradient(135deg, rgba(124,58,237,.45), rgba(0,245,212,.15));
+    }
+    #audioPanel { display: none; width: 100%; margin-top: 8px; }
+    #audioPanel.show { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .actions {
+      margin-top: 14px; display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;
+    }
+    .btn {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
+      background: rgba(255,255,255,.04); color: var(--text);
+      text-decoration: none; font-size: .85rem; font-weight: 600; cursor: pointer;
+      transition: .15s ease;
+    }
+    .btn:hover { transform: translateY(-1px); background: rgba(255,255,255,.08); }
+    .btn.primary {
+      background: linear-gradient(135deg, var(--violet2), #a855f7);
+      border-color: transparent;
+    }
+    .btn.mx { background: linear-gradient(135deg, #1a73e8, #3b82f6); border: none; }
+    .btn.vlc { background: linear-gradient(135deg, #e65100, #ff6d00); border: none; }
+    .btn.playit { background: linear-gradient(135deg, #7c3aed, #a855f7); border: none; }
+
+    .note {
+      margin-top: 16px; padding: 12px 14px;
+      border-left: 3px solid var(--cyan);
+      background: rgba(0,245,212,.06); border-radius: 0 10px 10px 0;
+      color: var(--muted); font-size: .82rem; line-height: 1.5;
+    }
+    footer {
+      margin-top: 28px; text-align: center; color: #475569; font-size: .75rem; padding-bottom: 24px;
+    }
+  </style>
 </head>
-
 <body>
-    <nav>
-        <div class="nleft">
-            <a href="https://t.me/Deendayal_dhakad">
-                <!-- if u are trying to change the header name please remove the title text from bottom line  -->
-                <h3 id="heading" style="z-index: 100;" class="magnet">Deendayal Dhakad</h3>
-            </a>
-        </div>
-        <div class="nryt">
-            <a class="home-btn magnet" href="#main" onclick="toggleWidthnav(this)">Home</a>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="https://t.me/Deendayal_dhakad">Deendayal Stream</a>
+      <span class="live">● LIVE</span>
+    </header>
 
-            <a href="#sec1" class="about-btn magnet" onclick="toggleWidthnav(this)">About</a>
-        </div>
-    </nav>
-    <center>
-        <div class="about-nav">
-            <a href="#sec1" class="wlcm magnet" onclick="toggleWidth(this)">Welcome</a>
-            <a href="#sec2" class="abt-chnl magnet" onclick="toggleWidth(this)">Channels</a>
-            <a href="#sec3" class="magnet bot-btn" onclick="toggleWidth(this) , bot_btn_clicked()">Bots</a>
-            <a href="#sec4" class="magnet contact-btn" onclick="toggleWidth(this)">Let's Talk</a>
-        </div>
-    </center>
-    <!-- this code is written by @biisal tg:biisal-files  -->
-    <!-- stealing credit doesn't make you developer..so try to give full credit to the developer 😊 u will not loose anything for giving proper credit.   -->
+    <div class="player-box">
+      <video id="player" playsinline preload="metadata" controls>
+        <source src="{{file_url}}">
+      </video>
+      <div id="mediaLoadingUI">
+        <div class="load-ring"></div>
+        <div class="load-text" id="mediaLoadingText">Loading…</div>
+      </div>
+    </div>
 
-    <div class="outer">
-        <div class="inner">
-            <div class="main" id="main">
-                <video id="player" class="player" src="{{file_url}}" type="video/mp4" playsinline controls
-                    width="100%"></video>
-                <div class="player"></div>
-                <div class="file-name">
-                    <h4>File name : </h4>
-                    <br>
-                    <p id="myDiv">{{file_name}}</p>
-                </div>
-                <div class="downloadBtn">
-                    <button class="magnet" onclick="vlc_player()"><img src="https://i.postimg.cc/15TQ4y7B/vlc.png"
-                            alt="">watch in VLC PLAYER</button>
-                    <button class="magnet" onclick="mx_player()"><img src="https://i.postimg.cc/sx4Msv4T/mx.png"
-                            alt="">watch in MX PLAYER</button>
-                    <button class="magnet" onclick="playit_player()"><img src="https://i.postimg.cc/RVGWYJFF/playit.png"
-                            alt="">watch in PLAYit
-                        PLAYER</button>
-                    <button class="magnet" onclick="km_player()"><img src="https://i.postimg.cc/wT9tFQ9Z/km.png"
-                            alt="">watch in KM PLAYER</button>
-                    <button class="magnet" onclick="s_player()"><img src="https://i.postimg.cc/XYJr6NGg/s.png"
-                            alt="">watch in S PLAYER</button>
-                    <button class="magnet" onclick="hd_player()"><img src="https://i.postimg.cc/rFT43LNh/hd.png"
-                            alt="">watch in HD
-                        PLAYER(4K)</button>
-                    <button class="magnet" onclick="bisalDownload()"><img style="height: 35px;"
-                            src="https://i.postimg.cc/Zncc9YLq/Pngtree-download-icon-3581467.png" alt="">download video
-                    </button>
-                </div>
+    <div class="file-card">
+      <div class="file-title">{{file_name}}</div>
+      <div class="file-meta">Size: {{file_size}}</div>
+    </div>
 
-            </div>
-            <div class="abt">
-                <div class="about">
-                    <div class="about-dets">
-                        <div class="abt-sec" id="sec1" style="padding: 160px 30px;">
-                            <h1 style="text-align: center;">WELCOME TO OUR <Span>STREAMING</Span> PAGE</h1>
-                            <p style="text-align: center; line-height: 2;word-spacing: 2px;  letter-spacing: 0.8px;">
-                                We're
-                                thrilled to have <span>you</span> here.
-                                Get ready for an
-                                amazing <span>experience</span>
-                                filled with <span>entertainment</span>, <span>fun</span>, and <span>surprises</span>.
-                                Grab
-                                your snacks, sit back, and <span>enjoy</span> the show!
-                            </p>
-                        </div>
-                        <div class="abt-sec" id="sec2">
-                            <h1>OUR ALL <span>CHANNELS</span> LIST</h1>
-                            <div class="links chnl-link">
-                                <a class="magnet" href="https://t.me/Deendayal_dhakad"><button>Update Channel </button></a>
-                                <a class="magnet" href="https://t.me/Deendayal_Movies_Group"><button> Movie Request Group </button></a>
-                                <a class="magnet" href="https://youtube.com/@Deendayal_Dhakad0"><button>YouTube Channel </button></a>
-                            </div>
-                        </div>
-                        <div class="abt-sec" id="sec3">
-                            <h1>OUR ALL <span>BOTS</span> LIST</h1>
-                            <div class="links bot-link">
-                                <a class="magnet" href="https://t.me/Deendayal_Chat_Gpt_Bot"><button>Chat Gpt Bot
-                                        </button></a>
-                                <a class="magnet" href="https://t.me/SHRADDHA_KAPOOR_20_Bot"><button>reaction Bot
-                                        </button></a>
-                            </div>
-                        </div>
-                        <div class="abt-sec" id="sec4">
-                            <!-- this code is written by @biisal tg:biisal-files  -->
-                            <!-- stealing credit doesn't make you developer..so try to give full credit to the developer 😊 u will not loose anything for giving proper credit.   -->
+    <div class="media-bar">
+      <span class="label"><i class="fa-solid fa-sliders"></i> MEDIA</span>
+      <button class="chip" id="btnAudio" type="button"><i class="fa-solid fa-music"></i> Audio</button>
+      <div id="audioPanel"></div>
+    </div>
 
-                            <p style="text-align: center;">We Can Tal'k For Your Support And You Can Report Through
-                                Telegram</p>
-                            <div class="links contact">
-                                <a href="https://t.me/Contact_Deendayal_bot"><button>Contact</button></a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <footer>
-            <div class="mid">
-                <h1 class="mid-text">VISIT <a href="#sec3" onclick="bot_btn_clicked()"><span>OUR BOTS LIST</span></a>
-                    FOR
-                    MORE
-                    INFO</h1>
-            </div>
+    <div class="actions">
+      <a class="btn primary" href="{{file_url}}" download><i class="fa-solid fa-download"></i> Download</a>
+      <button class="btn" type="button" onclick="copyLink()"><i class="fa-solid fa-link"></i> Copy Link</button>
+      <a class="btn mx" id="mxLink" href="#"><i class="fa-solid fa-play"></i> MX</a>
+      <a class="btn vlc" id="vlcLink" href="#"><i class="fa-solid fa-play"></i> VLC</a>
+      <a class="btn playit" id="playitLink" href="#"><i class="fa-solid fa-play"></i> PlayIt</a>
+    </div>
 
-            <div class="last-text">
-                <p style="font-weight: 500;">
-                    Welcome To Our Online Streaming Platform! Our Website Allows Users To Generate Streamable Links For
-                    Various Files Using Telegram Bots. Please Note That We Are Not Responsible For The Content Shared Or
-                    Streamed Through Our Service. Users Are Encouraged To Respect Copyright Laws And Adhere To Our
-                    Community
-                    Guidelines. Enjoy Easy, Hassle-Free File Streaming.
-                </p>
-            </div>
-            <center>
+    <div class="note">
+      Multi-audio is supported in browser. First track switch may take time while the server prepares audio.
+      For best multi-audio experience use MX Player or VLC.
+    </div>
 
-                <div class="movie-cont">
-                    <a href="https://t.me/+PA8OPL2Zglk3MDM1">
-                        <div class="movieSug">
-                            <div class="movieDets">
+    <footer>© Deendayal Stream · For personal use only</footer>
+  </div>
 
-                            </div>
-                            <div class="movieimg">
-                                <img src="">
-                            </div>
-                        </div>
-                    </a>
-                    <div class="low-width-movie-dets">
-                        <div class="movieStsBar">
-                            <div class="movieDets-mini">
+  <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
+  <script>
+    const STREAM_URL = "{{file_url}}";
 
-                            </div>
-                        </div>
-                    </div>
-                    <button class="ranMovBtn" onclick="getDets()">Get More Movies Suggestion</button>
-                </div>
+    let player = null;
+    let fetchedTracks = null;
+    let activeAudio = null;
+    let activeTrackIdx = null;
+    let isPreparingAudio = false;
+    let wantPlayWhenReady = false;
+    let resumeTime = 0;
+    let prepareWatch = null;
+    let buffering = false;
+    let audioCtx = null;
+    let vidGainNode = null;
+    let useFallbackMute = false;
 
-            </center>
-            <!-- this code is written by @biisal tg:biisal-files  -->
-            <!-- stealing credit doesn't make you developer..so try to give full credit to the developer 😊 u will not loose anything for giving proper credit.   -->
+    function buildAudioUrl(streamIndex) {
+      const u = new URL(STREAM_URL, window.location.origin);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/audio/' + streamIndex + '/' + pathParts.join('/');
+      return u.toString();
+    }
+    function buildTracksUrl() {
+      const u = new URL(STREAM_URL, window.location.origin);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/api/tracks/' + pathParts.join('/');
+      return u.toString();
+    }
 
+    const LANG_MAP = {
+      eng:'English', en:'English', hin:'Hindi', hi:'Hindi',
+      tam:'Tamil', ta:'Tamil', tel:'Telugu', te:'Telugu',
+      mal:'Malayalam', ml:'Malayalam', kan:'Kannada', kn:'Kannada',
+      ben:'Bengali', bn:'Bengali', pan:'Punjabi', pa:'Punjabi'
+    };
+    function trackLabel(track, idx) {
+      const meta = track.tags || {};
+      const lang = (meta.language || '').toLowerCase();
+      const title = meta.title || '';
+      let label = LANG_MAP[lang] || lang || ('Track ' + (idx + 1));
+      if (idx === 0) label += ' (Default)';
+      if (title && title.length < 40) label += ' — ' + title;
+      return label;
+    }
+    function getVideo() { return document.querySelector('#player'); }
 
-            <center>
-                <div class="copyright">
-                    <h5 class="text-center">Copyright © 2024 <a href="https://t.me/Deendayal_dhakad"><span
-                                style="font-weight: 700;">Deendayal_dhakad</span></a>. All
-                        Rights Reserved.</h5>
-                    <div class="icons">
-                        <a href="https://t.me/Deendayal_dhakad"><i class="fa-brands fa-telegram fa-lg"></i></a>
-                        
-                    </div>
-                    <h4 style="font-weight: 700;">This Page Is Made By <a
-                            href="https://t.me/Deendayal_dhakad"><span>Deendayal_dhakad</span></a></h4>
-                </div>
-            </center>
-        </footer>
-</body>
+    function showLoadingUI(show, text) {
+      const el = document.getElementById('mediaLoadingUI');
+      const txt = document.getElementById('mediaLoadingText');
+      const plyrEl = document.querySelector('.plyr');
+      if (txt && text) txt.textContent = text;
+      if (show) {
+        if (el) el.classList.add('show');
+        if (plyrEl) plyrEl.classList.add('controls-locked');
+      } else {
+        if (el) el.classList.remove('show');
+        if (plyrEl) plyrEl.classList.remove('controls-locked');
+      }
+    }
+    function updateLoadingUI() {
+      if (isPreparingAudio) { showLoadingUI(true, 'Preparing audio track…'); return; }
+      if (buffering) { showLoadingUI(true, 'Loading…'); return; }
+      showLoadingUI(false);
+    }
+    function forcePauseIfPreparing() {
+      if (!isPreparingAudio) return;
+      const vid = getVideo();
+      if (vid && !vid.paused) { vid.pause(); wantPlayWhenReady = true; }
+      if (player && player.playing) { player.pause(); wantPlayWhenReady = true; }
+    }
+    function setPreparing(on) {
+      isPreparingAudio = on;
+      const plyrEl = document.querySelector('.plyr');
+      if (plyrEl) {
+        if (on) plyrEl.classList.add('seek-blocked');
+        else plyrEl.classList.remove('seek-blocked');
+      }
+      if (on) {
+        if (prepareWatch) clearInterval(prepareWatch);
+        prepareWatch = setInterval(forcePauseIfPreparing, 100);
+      } else if (prepareWatch) {
+        clearInterval(prepareWatch); prepareWatch = null;
+      }
+      updateLoadingUI();
+    }
 
+    function initAudioContext(vid) {
+      if (!vid) return;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { useFallbackMute = true; return; }
+      try {
+        if (!audioCtx) audioCtx = new AC();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        if (!vid.__audioConnected) {
+          const src = audioCtx.createMediaElementSource(vid);
+          vidGainNode = audioCtx.createGain();
+          src.connect(vidGainNode);
+          vidGainNode.connect(audioCtx.destination);
+          vid.__audioConnected = true;
+        }
+        if (vidGainNode) vidGainNode.gain.value = (activeTrackIdx !== null) ? 0 : 1;
+      } catch (e) { useFallbackMute = true; }
+    }
+    function silenceVideo(vid) {
+      initAudioContext(vid);
+      if (useFallbackMute) { if (vid) vid.muted = true; return; }
+      if (vidGainNode) vidGainNode.gain.value = 0;
+    }
+    function restoreVideoAudio(vid) {
+      if (useFallbackMute) { if (vid) vid.muted = false; return; }
+      if (vidGainNode) vidGainNode.gain.value = 1;
+    }
+    function destroyAudio() {
+      if (!activeAudio) return;
+      try {
+        activeAudio.pause();
+        activeAudio.removeAttribute('src');
+        activeAudio.load();
+        activeAudio.remove();
+      } catch (e) {}
+      activeAudio = null; activeTrackIdx = null;
+    }
+    function syncVolume() {
+      if (!activeAudio || !player) return;
+      activeAudio.volume = player.volume;
+      activeAudio.muted = player.muted;
+    }
+    function syncTime() {
+      const vid = getVideo();
+      if (!activeAudio || !vid || isPreparingAudio) return;
+      if (Math.abs(activeAudio.currentTime - vid.currentTime) > 0.4) {
+        try { activeAudio.currentTime = vid.currentTime; } catch (e) {}
+      }
+    }
+    function ensureAudioPlaying() {
+      const vid = getVideo();
+      if (!activeAudio || !vid || isPreparingAudio) return;
+      if (!vid.paused && activeAudio.paused) activeAudio.play().catch(function(){});
+      if (vid.paused && !activeAudio.paused) activeAudio.pause();
+    }
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.155.0/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/automat/controlkit.js@master/bin/controlKit.min.js"></script>
-<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/sheryjs/dist/Shery.js"></script>
-<script>
-    document.addEventListener("DOMContentLoaded", function () {
-        const uncopyableElement = document.querySelector(".uncopyable");
+    function switchToTrack(streamIndex) {
+      const vid = getVideo();
+      if (!vid) return;
+      initAudioContext(vid);
+      if (activeTrackIdx === streamIndex && activeAudio && !isPreparingAudio) return;
 
-        uncopyableElement.addEventListener("selectstart", function (event) {
-            event.preventDefault();
-        });
+      resumeTime = vid.currentTime || 0;
+      wantPlayWhenReady = !vid.paused;
+      vid.pause();
+      if (activeAudio) { try { activeAudio.pause(); } catch (e) {} }
+
+      destroyAudio();
+      activeTrackIdx = streamIndex;
+      silenceVideo(vid);
+      setPreparing(true);
+
+      activeAudio = document.createElement('audio');
+      activeAudio.preload = 'auto';
+      activeAudio.style.display = 'none';
+      document.body.appendChild(activeAudio);
+      activeAudio.src = buildAudioUrl(streamIndex);
+      syncVolume();
+
+      activeAudio.addEventListener('canplay', function onCanPlay() {
+        activeAudio.removeEventListener('canplay', onCanPlay);
+        try {
+          activeAudio.currentTime = resumeTime;
+          vid.currentTime = resumeTime;
+        } catch (e) {}
+        setPreparing(false);
+        if (wantPlayWhenReady) {
+          wantPlayWhenReady = false;
+          activeAudio.play().catch(function(){});
+          vid.play().catch(function(){});
+        }
+        markActiveChip(streamIndex);
+      });
+      activeAudio.addEventListener('error', function () {
+        setPreparing(false);
+        wantPlayWhenReady = false;
+        switchToDefault();
+        alert('Selected audio track failed. Switched back to default.');
+      });
+      activeAudio.load();
+    }
+
+    function switchToDefault() {
+      const vid = getVideo();
+      resumeTime = vid ? (vid.currentTime || 0) : 0;
+      const wasPlaying = vid && !vid.paused;
+      setPreparing(false);
+      wantPlayWhenReady = false;
+      destroyAudio();
+      restoreVideoAudio(vid);
+      markActiveChip(null);
+      if (vid) {
+        try { vid.currentTime = resumeTime; } catch (e) {}
+        if (wasPlaying) vid.play().catch(function(){});
+      }
+    }
+
+    function markActiveChip(streamIndex) {
+      document.querySelectorAll('#audioPanel .chip').forEach(function (el) {
+        el.classList.toggle('active', String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex));
+      });
+    }
+
+    function renderAudioPanel(tracks) {
+      const panel = document.getElementById('audioPanel');
+      if (!panel || !tracks || tracks.length < 2) {
+        document.getElementById('btnAudio').style.display = 'none';
+        return;
+      }
+      panel.innerHTML = '';
+      tracks.forEach(function (track, idx) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chip' + (idx === 0 ? ' active' : '');
+        b.dataset.index = idx === 0 ? 'default' : track.index;
+        b.textContent = trackLabel(track, idx);
+        b.onclick = function () {
+          if (idx === 0) switchToDefault();
+          else switchToTrack(track.index);
+        };
+        panel.appendChild(b);
+      });
+    }
+
+    document.getElementById('btnAudio').addEventListener('click', function () {
+      document.getElementById('audioPanel').classList.toggle('show');
     });
-</script>
-<script src="js/wow.min.js"></script>
-<script>
-    new WOW().init();
-</script>
-<script src="https://cdn.plyr.io/3.6.9/plyr.js"></script>
-<script src="https://biisal.github.io/Resources/StreamJs.js"></script>
-<script src="script.js"></script>
 
+    (function () {
+      const intent = 'intent://' + STREAM_URL.replace(/^https?:\/\//, '') + '#Intent;type=video/*;';
+      document.getElementById('vlcLink').href = 'vlc://' + STREAM_URL;
+      document.getElementById('mxLink').href = intent + 'package=com.mxtech.videoplayer.ad;end';
+      document.getElementById('playitLink').href = intent + 'package=com.jio.media.jiobeats;end';
+    })();
+
+    function copyLink() {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied!'); })
+          .catch(function () { prompt('Copy this link:', STREAM_URL); });
+      } else prompt('Copy this link:', STREAM_URL);
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      showLoadingUI(true, 'Loading…');
+
+      player = new Plyr('#player', {
+        controls: ['play-large','rewind','play','fast-forward','progress','current-time','duration','mute','volume','settings','fullscreen'],
+        settings: ['speed'],
+        speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
+        seekTime: 10
+      });
+
+      player.on('volumechange', syncVolume);
+      player.on('play', function () {
+        if (isPreparingAudio) {
+          player.pause();
+          const vid = getVideo();
+          if (vid) vid.pause();
+          wantPlayWhenReady = true;
+          updateLoadingUI();
+          return;
+        }
+        ensureAudioPlaying();
+      });
+
+      document.addEventListener('keydown', function (e) {
+        if (!isPreparingAudio) return;
+        const key = e.key.toLowerCase();
+        if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') {
+          e.preventDefault(); e.stopPropagation();
+        }
+      }, true);
+
+      fetch(buildTracksUrl())
+        .then(function (r) { return r.json(); })
+        .then(function (tracks) {
+          if (Array.isArray(tracks) && tracks.length) {
+            fetchedTracks = tracks;
+            renderAudioPanel(tracks);
+          }
+        })
+        .catch(function () {});
+
+      const vid = getVideo();
+      if (vid) {
+        ['loadstart','waiting','stalled'].forEach(function (ev) {
+          vid.addEventListener(ev, function () { buffering = true; updateLoadingUI(); });
+        });
+        ['canplay','playing','loadeddata'].forEach(function (ev) {
+          vid.addEventListener(ev, function () { buffering = false; updateLoadingUI(); });
+        });
+        vid.addEventListener('play', function () {
+          if (isPreparingAudio) {
+            vid.pause(); wantPlayWhenReady = true; updateLoadingUI();
+          }
+        });
+        vid.addEventListener('seeked', function () {
+          if (isPreparingAudio) return;
+          if (activeAudio) {
+            try { activeAudio.currentTime = vid.currentTime; } catch (e) {}
+            ensureAudioPlaying();
+          }
+        });
+        vid.addEventListener('pause', function () {
+          if (activeAudio && !isPreparingAudio) activeAudio.pause();
+        });
+        setInterval(function () {
+          if (activeAudio && vid && !vid.paused && !isPreparingAudio) syncTime();
+        }, 2000);
+      }
+    });
+  </script>
+</body>
 </html>
