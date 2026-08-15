@@ -3,19 +3,30 @@ import re
 import math
 import logging
 import secrets
-import time
 import mimetypes
 from aiohttp.http_exceptions import BadStatusLine
 from Deendayal_botz.Bot import multi_clients, work_loads, DeendayalBot
 from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
-from Deendayal_botz.zzint import StartTime, __version__
 from Deendayal_botz.util.custom_dl import ByteStreamer
-from Deendayal_botz.util.time_format import get_readable_time
 from Deendayal_botz.util.render_template import render_page
+from Deendayal_botz.util.audio_tracks import get_tracks, extract_audio_stream
 from info import *
 
-
 routes = web.RouteTableDef()
+
+
+def parse_id_hash(path: str, request: web.Request):
+    match = re.search(r"^([a-zA-Z0-9_-]{6})(\d+)$", path)
+    if match:
+        return int(match.group(2)), match.group(1)
+    m = re.search(r"(\d+)(?:/\S+)?", path)
+    if not m:
+        raise web.HTTPBadRequest(text="Invalid path")
+    secure_hash = request.rel_url.query.get("hash")
+    if not secure_hash:
+        raise web.HTTPBadRequest(text="Missing hash")
+    return int(m.group(1)), secure_hash
+
 
 @routes.get("/", allow_head=True)
 async def root_route_handler(request):
@@ -23,17 +34,11 @@ async def root_route_handler(request):
 
 
 @routes.get(r"/watch/{path:\S+}", allow_head=True)
-async def stream_handler(request: web.Request):
+async def watch_handler(request: web.Request):
     try:
         path = request.match_info["path"]
-        match = re.search(r"^([a-zA-Z0-9_-]{6})(\d+)$", path)
-        if match:
-            secure_hash = match.group(1)
-            id = int(match.group(2))
-        else:
-            id = int(re.search(r"(\d+)(?:\/\S+)?", path).group(1))
-            secure_hash = request.rel_url.query.get("hash")
-        return web.Response(text=await render_page(id, secure_hash), content_type='text/html')
+        id, secure_hash = parse_id_hash(path, request)
+        return web.Response(text=await render_page(id, secure_hash), content_type="text/html")
     except InvalidHash as e:
         raise web.HTTPForbidden(text=e.message)
     except FIleNotFound as e:
@@ -44,17 +49,53 @@ async def stream_handler(request: web.Request):
         logging.critical(e.with_traceback(None))
         raise web.HTTPInternalServerError(text=str(e))
 
+
+@routes.get(r"/api/tracks/{path:\S+}", allow_head=True)
+async def tracks_handler(request: web.Request):
+    try:
+        path = request.match_info["path"]
+        id, secure_hash = parse_id_hash(path, request)
+        tracks = await get_tracks(id, secure_hash)
+        return web.json_response(tracks)
+    except InvalidHash as e:
+        raise web.HTTPForbidden(text=e.message)
+    except FIleNotFound as e:
+        raise web.HTTPNotFound(text=e.message)
+    except Exception as e:
+        logging.exception("tracks_handler error")
+        raise web.HTTPInternalServerError(text=str(e))
+
+
+@routes.get(r"/audio/{stream_index:\d+}/{path:\S+}", allow_head=True)
+async def audio_handler(request: web.Request):
+    try:
+        path = request.match_info["path"]
+        stream_index = int(request.match_info["stream_index"])
+        id, secure_hash = parse_id_hash(path, request)
+        body = await extract_audio_stream(id, secure_hash, stream_index)
+        return web.Response(
+            status=200,
+            body=body,
+            headers={
+                "Content-Type": "audio/aac",
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "public, max-age=3600",
+            },
+        )
+    except InvalidHash as e:
+        raise web.HTTPForbidden(text=e.message)
+    except FIleNotFound as e:
+        raise web.HTTPNotFound(text=e.message)
+    except Exception as e:
+        logging.exception("audio_handler error")
+        raise web.HTTPInternalServerError(text=str(e))
+
+
 @routes.get(r"/{path:\S+}", allow_head=True)
 async def stream_handler(request: web.Request):
     try:
         path = request.match_info["path"]
-        match = re.search(r"^([a-zA-Z0-9_-]{6})(\d+)$", path)
-        if match:
-            secure_hash = match.group(1)
-            id = int(match.group(2))
-        else:
-            id = int(re.search(r"(\d+)(?:\/\S+)?", path).group(1))
-            secure_hash = request.rel_url.query.get("hash")
+        id, secure_hash = parse_id_hash(path, request)
         return await media_streamer(request, id, secure_hash)
     except InvalidHash as e:
         raise web.HTTPForbidden(text=e.message)
@@ -66,32 +107,30 @@ async def stream_handler(request: web.Request):
         logging.critical(e.with_traceback(None))
         raise web.HTTPInternalServerError(text=str(e))
 
+
 class_cache = {}
+
 
 async def media_streamer(request: web.Request, id: int, secure_hash: str):
     range_header = request.headers.get("Range", 0)
-    
+
     index = min(work_loads, key=work_loads.get)
     faster_client = multi_clients[index]
-    
+
     if MULTI_CLIENT:
         logging.info(f"Client {index} is now serving {request.remote}")
 
     if faster_client in class_cache:
         tg_connect = class_cache[faster_client]
-        logging.debug(f"Using cached ByteStreamer object for client {index}")
     else:
-        logging.debug(f"Creating new ByteStreamer object for client {index}")
         tg_connect = ByteStreamer(faster_client)
         class_cache[faster_client] = tg_connect
-    logging.debug("before calling get_file_properties")
+
     file_id = await tg_connect.get_file_properties(id)
-    logging.debug("after calling get_file_properties")
-    
+
     if file_id.unique_id[:6] != secure_hash:
-        logging.debug(f"Invalid hash for message with ID {id}")
         raise InvalidHash
-    
+
     file_size = file_id.file_size
 
     if range_header:
@@ -124,7 +163,7 @@ async def media_streamer(request: web.Request, id: int, secure_hash: str):
 
     mime_type = file_id.mime_type
     file_name = file_id.file_name
-    disposition = "attachment"
+    disposition = "inline"
 
     if mime_type:
         if not file_name:
@@ -134,7 +173,7 @@ async def media_streamer(request: web.Request, id: int, secure_hash: str):
                 file_name = f"{secrets.token_hex(2)}.unknown"
     else:
         if file_name:
-            mime_type = mimetypes.guess_type(file_id.file_name)
+            mime_type = mimetypes.guess_type(file_id.file_name)[0] or "application/octet-stream"
         else:
             mime_type = "application/octet-stream"
             file_name = f"{secrets.token_hex(2)}.unknown"
