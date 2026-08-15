@@ -1,19 +1,36 @@
 import re
 import aiohttp
 import asyncio
+import logging
 from io import BytesIO
 from PIL import Image
 from info import DEENDAYAL_IMAGE_FETCH
-from imdb import Cinemagoer
 
+try:
+    from imdb import Cinemagoer
+except Exception:
+    Cinemagoer = None
 
-ia = Cinemagoer()
+ia = None
+if Cinemagoer is not None:
+    try:
+        # Correct SQLite URL (3 slashes) — fixes sqlite://cinemagoer.db error
+        ia = Cinemagoer(uri='sqlite:///cinemagoer.db')
+    except Exception:
+        try:
+            ia = Cinemagoer()
+        except Exception as e:
+            logging.warning("Imdbposter Cinemagoer unavailable: %s", e)
+            ia = None
+
 LONG_IMDB_DESCRIPTION = False
+
 
 def list_to_str(lst):
     if lst:
         return ", ".join(map(str, lst))
     return ""
+
 
 async def fetch_image(url, size=(720, 720)):
     if not DEENDAYAL_IMAGE_FETCH:
@@ -41,7 +58,10 @@ async def fetch_image(url, size=(720, 720)):
         print(f"Unexpected error in fetch_image: {e}")
     return None
 
+
 async def get_movie_details(query, id=False, file=None):
+    if ia is None:
+        return None
     try:
         if not id:
             query = query.strip().lower()
