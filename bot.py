@@ -21,6 +21,7 @@ from plugins import web_server, check_expired_premium, keep_alive
 from Deendayal_botz.Bot import DeendayalBot
 from Deendayal_botz.util.keepalive import ping_server
 from Deendayal_botz.Bot.clients import initialize_clients
+from Deendayal_botz.util.audio_tracks import start_cache_cleanup_loop
 
 logging.config.fileConfig('logging.conf')
 logging.getLogger().setLevel(logging.INFO)
@@ -44,6 +45,7 @@ async def Deendayal_start():
     bot_info = await DeendayalBot.get_me()
     DeendayalBot.username = bot_info.username
     await initialize_clients()
+    asyncio.create_task(start_cache_cleanup_loop())
     for name in files:
         with open(name) as a:
             patt = Path(a.name)
@@ -56,7 +58,7 @@ async def Deendayal_start():
             sys.modules["plugins." + plugin_name] = load
             print("Deendayal dhakad Imported => " + plugin_name)
     if ON_HEROKU:
-        asyncio.create_task(ping_server()) 
+        asyncio.create_task(ping_server())
     b_users, b_chats = await db.get_banned()
     temp.BANNED_USERS = b_users
     temp.BANNED_CHATS = b_chats
@@ -64,7 +66,7 @@ async def Deendayal_start():
     await Media2.ensure_indexes()
     stats = await clientDB.command('dbStats')
     free_dbSize = round(512-((stats['dataSize']/(1024*1024))+(stats['indexSize']/(1024*1024))), 2)
-    if DATABASE_URI2 and free_dbSize<62: #if the primary db have less than 62MB left, use second DB.
+    if DATABASE_URI2 and free_dbSize < 62:
         tempDict["indexDB"] = DATABASE_URI2
         logging.info(f"Since Primary DB have only {free_dbSize} MB left, Secondary DB will be used to store datas.")
     elif DATABASE_URI2 is None:
@@ -72,7 +74,7 @@ async def Deendayal_start():
         exit()
     else:
         logging.info(f"Since primary DB have enough space ({free_dbSize}MB) left, It will be used for storing datas.")
-    await choose_mediaDB()    
+    await choose_mediaDB()
     me = await DeendayalBot.get_me()
     temp.ME = me.id
     temp.U_NAME = me.username
@@ -86,15 +88,15 @@ async def Deendayal_start():
     tz = pytz.timezone('Asia/Kolkata')
     today = date.today()
     now = datetime.now(tz)
-    time = now.strftime("%H:%M:%S %p")
-    await DeendayalBot.send_message(chat_id=LOG_CHANNEL, text=script.RESTART_TXT.format(temp.B_LINK, today, time))
+    time_now = now.strftime("%H:%M:%S %p")
+    await DeendayalBot.send_message(chat_id=LOG_CHANNEL, text=script.RESTART_TXT.format(temp.B_LINK, today, time_now))
     app = web.AppRunner(await web_server())
     await app.setup()
     bind_address = "0.0.0.0"
     await web.TCPSite(app, bind_address, PORT).start()
     DeendayalBot.loop.create_task(keep_alive())
     await idle()
-    
+
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
     try:
