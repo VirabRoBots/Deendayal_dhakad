@@ -206,14 +206,23 @@
     const STREAM_URL = "{{file_url}}";
     // Must match SEEK_BUCKET_SECONDS in audio_tracks.py
     const SEEK_BUCKET_SECONDS = 10;
+    // How far video/audio are allowed to drift before we force a resync (seconds)
+    const MAX_DRIFT_SECONDS = 0.35;
+    // How often we check for drift while both are playing (ms)
+    const DRIFT_CHECK_INTERVAL_MS = 1000;
 
     let player = null;
     let fetchedTracks = null;
     let activeAudio = null;
     let activeTrackIdx = null;
+    // The video-timeline second the current activeAudio's t=0 corresponds to.
+    // Needed because the extracted audio file's own clock always starts at 0,
+    // not at the video's current time.
+    let activeBucketStart = 0;
     let isPreparingAudio = false;
     let wantPlayWhenReady = false;
     let prepareWatch = null;
+    let driftWatch = null;
     let buffering = false;
     let audioCtx = null;
     let vidGainNode = null;
@@ -290,6 +299,11 @@
         else plyrEl.classList.remove('seek-blocked');
       }
       if (on) {
+        // FIX: pause immediately instead of waiting for the next 100ms tick.
+        // Previously the video kept rolling for up to ~100ms after tapping
+        // a language chip, which is the "video moves a bit before Preparing
+        // audio shows up" symptom.
+        forcePauseIfPreparing();
         if (prepareWatch) clearInterval(prepareWatch);
         prepareWatch = setInterval(forcePauseIfPreparing, 100);
       } else if (prepareWatch) {
@@ -346,12 +360,45 @@
       if (vid.paused && !activeAudio.paused) activeAudio.pause();
     }
 
+    // Expected position of activeAudio's own clock, given where the video is now.
+    function expectedAudioTime(vid) {
+      return Math.max(0, (vid.currentTime || 0) - activeBucketStart);
+    }
+
+    // Checks periodically whether video/audio have drifted apart (e.g. from
+    // independent decode clocks over a long playback) and snaps audio back
+    // in line if so.
+    function startDriftWatch() {
+      stopDriftWatch();
+      driftWatch = setInterval(function () {
+        const vid = getVideo();
+        if (!vid || !activeAudio || isPreparingAudio) return;
+        if (vid.paused || activeAudio.paused) return;
+        const expected = expectedAudioTime(vid);
+        const drift = Math.abs(activeAudio.currentTime - expected);
+        if (drift > MAX_DRIFT_SECONDS) {
+          try { activeAudio.currentTime = expected; } catch (e) {}
+        }
+      }, DRIFT_CHECK_INTERVAL_MS);
+    }
+    function stopDriftWatch() {
+      if (driftWatch) { clearInterval(driftWatch); driftWatch = null; }
+    }
+
     // Requests audio for `streamIndex` starting at `atTime` (defaults to the
     // video's current position). Used both for picking a language AND for
     // re-syncing after the user seeks while a language is already active.
     function requestAudio(streamIndex, atTime) {
       const vid = getVideo();
       if (!vid) return;
+
+      // FIX: pause the video the instant a track is requested, before doing
+      // anything else. This is what actually closes the "video moves a bit"
+      // gap — setPreparing(true) below will also pause it, but we don't want
+      // to wait even the few ms that takes.
+      const wasPlayingBeforePause = !vid.paused;
+      if (wasPlayingBeforePause) vid.pause();
+
       const requestedTime = (atTime != null) ? atTime : (vid.currentTime || 0);
       const bucketStart = roundToBucket(requestedTime);
       const correction = Math.max(0, requestedTime - bucketStart);
@@ -359,11 +406,13 @@
       initAudioContext(vid);
 
       const myRequestId = ++audioRequestId;
-      const wasPlaying = !vid.paused;
+      const wasPlaying = wasPlayingBeforePause;
 
       if (activeAudio) { try { activeAudio.pause(); } catch (e) {} }
       destroyAudio();
+      stopDriftWatch();
       activeTrackIdx = streamIndex;
+      activeBucketStart = bucketStart;
       silenceVideo(vid);
       setPreparing(true);
       wantPlayWhenReady = wasPlaying;
@@ -390,6 +439,7 @@
           activeAudio.play().catch(function(){});
           vid.play().catch(function(){});
         }
+        startDriftWatch();
         markActiveChip(streamIndex);
       });
       audioEl.addEventListener('error', function () {
@@ -420,8 +470,10 @@
       audioRequestId++; // invalidate any in-flight request for a language track
       setPreparing(false);
       wantPlayWhenReady = false;
+      stopDriftWatch();
       destroyAudio();
       activeTrackIdx = null;
+      activeBucketStart = 0;
       restoreVideoAudio(vid);
       markActiveChip(null);
       if (vid && wasPlaying) vid.play().catch(function(){});
@@ -494,6 +546,15 @@
         }
         ensureAudioPlaying();
       });
+      player.on('pause', function () {
+        // FIX: keep audio paused whenever the video is paused (manual pause,
+        // not just buffering), so they can't run ahead of each other.
+        if (activeAudio && !activeAudio.paused) activeAudio.pause();
+      });
+      // FIX: catch user seeks (scrubbing the progress bar / clicking ahead)
+      // so the active language track gets re-requested for the new position
+      // instead of silently staying at the old spot.
+      player.on('seeking', onSeekWhileActive);
 
       document.addEventListener('keydown', function (e) {
         if (!isPreparingAudio) return;
@@ -516,23 +577,39 @@
       const vid = getVideo();
       if (vid) {
         ['loadstart','waiting','stalled'].forEach(function (ev) {
-          vid.addEventListener(ev, function () { buffering = true; updateLoadingUI(); });
+          vid.addEventListener(ev, function () {
+            buffering = true;
+            updateLoadingUI();
+            // FIX: pause the language audio track while the video buffers,
+            // instead of letting it keep playing ahead of a stalled video.
+            if (activeAudio && !activeAudio.paused) activeAudio.pause();
+          });
         });
         ['canplay','playing','loadeddata'].forEach(function (ev) {
-          vid.addEventListener(ev, function () { buffering = false; updateLoadingUI(); });
+          vid.addEventListener(ev, function () {
+            buffering = false;
+            updateLoadingUI();
+            // FIX: when the video resumes after buffering, snap audio back
+            // to the correct position (not just wherever it happened to be
+            // when it was paused) before letting it play again.
+            if (activeAudio && !isPreparingAudio && !vid.paused) {
+              try { activeAudio.currentTime = expectedAudioTime(vid); } catch (e) {}
+              if (activeAudio.paused) activeAudio.play().catch(function(){});
+            }
+          });
         });
         vid.addEventListener('play', function () {
           if (isPreparingAudio) {
-            vid.pause(); wantPlayWhenReady = true; updateLoadingUI();
+            vid.pause();
+            wantPlayWhenReady = true;
+            return;
           }
-        });
-        // User jumped to a new spot (dragged progress bar, tapped ahead, etc).
-        vid.addEventListener('seeked', function () {
-          onSeekWhileActive();
+          ensureAudioPlaying();
         });
         vid.addEventListener('pause', function () {
-          if (activeAudio && !isPreparingAudio) activeAudio.pause();
+          if (activeAudio && !activeAudio.paused) activeAudio.pause();
         });
+        vid.addEventListener('seeked', onSeekWhileActive);
       }
     });
   </script>
