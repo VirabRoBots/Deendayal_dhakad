@@ -13,7 +13,6 @@
       --violet: #9d6fff;
       --violet2: #7c3aed;
       --bg0: #04040f;
-      --bg1: #08081a;
       --glass: rgba(255,255,255,0.05);
       --border: rgba(255,255,255,0.09);
       --text: #f1f5f9;
@@ -38,7 +37,6 @@
       pointer-events: none; z-index: 0;
     }
     .wrap { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 16px; }
-
     header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 14px 0 18px;
@@ -54,7 +52,6 @@
       border: 1px solid rgba(0,245,212,.35);
       padding: 4px 10px; border-radius: 99px;
     }
-
     .player-box {
       position: relative;
       border-radius: var(--r);
@@ -69,7 +66,6 @@
       opacity: 0 !important; visibility: hidden !important; pointer-events: none !important;
     }
     .seek-blocked .plyr__progress input { pointer-events: none; }
-
     #mediaLoadingUI {
       position: absolute; inset: 0; z-index: 9999;
       background: rgba(4,4,15,.9);
@@ -85,7 +81,6 @@
     }
     .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; letter-spacing: .5px; }
     @keyframes spin { to { transform: rotate(360deg); } }
-
     .file-card {
       margin-top: 16px;
       background: var(--glass);
@@ -99,7 +94,6 @@
       line-height: 1.4; word-break: break-word; margin-bottom: 6px;
     }
     .file-meta { color: var(--muted); font-size: .85rem; }
-
     .media-bar {
       margin-top: 14px;
       display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
@@ -123,7 +117,6 @@
     }
     #audioPanel { display: none; width: 100%; margin-top: 8px; }
     #audioPanel.show { display: flex; flex-wrap: wrap; gap: 8px; }
-
     .actions {
       margin-top: 14px; display: grid;
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;
@@ -143,7 +136,6 @@
     .btn.mx { background: linear-gradient(135deg, #1a73e8, #3b82f6); border: none; }
     .btn.vlc { background: linear-gradient(135deg, #e65100, #ff6d00); border: none; }
     .btn.playit { background: linear-gradient(135deg, #7c3aed, #a855f7); border: none; }
-
     .note {
       margin-top: 16px; padding: 12px 14px;
       border-left: 3px solid var(--cyan);
@@ -192,10 +184,8 @@
     </div>
 
     <div class="note">
-      Multi-audio is supported in browser. First track switch, and jumping to a new
-      part of the video while a language is selected, may take a moment while the
-      server prepares audio for that spot. For best multi-audio experience use MX
-      Player or VLC.
+      Multi-audio is supported in browser. First track switch or seek may take a moment
+      while audio is prepared. For best multi-audio use MX Player or VLC.
     </div>
 
     <footer>© Deendayal Stream · For personal use only</footer>
@@ -204,20 +194,13 @@
   <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
   <script>
     const STREAM_URL = "{{file_url}}";
-    // Must match SEEK_BUCKET_SECONDS in audio_tracks.py
     const SEEK_BUCKET_SECONDS = 10;
-    // How far video/audio are allowed to drift before we force a resync (seconds)
     const MAX_DRIFT_SECONDS = 0.35;
-    // How often we check for drift while both are playing (ms)
     const DRIFT_CHECK_INTERVAL_MS = 1000;
 
     let player = null;
-    let fetchedTracks = null;
     let activeAudio = null;
     let activeTrackIdx = null;
-    // The video-timeline second the current activeAudio's t=0 corresponds to.
-    // Needed because the extracted audio file's own clock always starts at 0,
-    // not at the video's current time.
     let activeBucketStart = 0;
     let isPreparingAudio = false;
     let wantPlayWhenReady = false;
@@ -227,11 +210,9 @@
     let audioCtx = null;
     let vidGainNode = null;
     let useFallbackMute = false;
-
-    // Bumped every time we (re)request audio, so a slow/late response from
-    // an old request can't overwrite a newer one.
     let audioRequestId = 0;
     let seekDebounceTimer = null;
+    let wasPlayingBeforeSeek = false;
 
     function roundToBucket(t) {
       return Math.round(t / SEEK_BUCKET_SECONDS) * SEEK_BUCKET_SECONDS;
@@ -299,15 +280,12 @@
         else plyrEl.classList.remove('seek-blocked');
       }
       if (on) {
-        // FIX: pause immediately instead of waiting for the next 100ms tick.
-        // Previously the video kept rolling for up to ~100ms after tapping
-        // a language chip, which is the "video moves a bit before Preparing
-        // audio shows up" symptom.
         forcePauseIfPreparing();
         if (prepareWatch) clearInterval(prepareWatch);
         prepareWatch = setInterval(forcePauseIfPreparing, 100);
       } else if (prepareWatch) {
-        clearInterval(prepareWatch); prepareWatch = null;
+        clearInterval(prepareWatch);
+        prepareWatch = null;
       }
       updateLoadingUI();
     }
@@ -356,18 +334,12 @@
     function ensureAudioPlaying() {
       const vid = getVideo();
       if (!activeAudio || !vid || isPreparingAudio) return;
-      if (!vid.paused && activeAudio.paused) activeAudio.play().catch(function(){});
+      if (!vid.paused && activeAudio.paused) activeAudio.play().catch(function () {});
       if (vid.paused && !activeAudio.paused) activeAudio.pause();
     }
-
-    // Expected position of activeAudio's own clock, given where the video is now.
     function expectedAudioTime(vid) {
       return Math.max(0, (vid.currentTime || 0) - activeBucketStart);
     }
-
-    // Checks periodically whether video/audio have drifted apart (e.g. from
-    // independent decode clocks over a long playback) and snaps audio back
-    // in line if so.
     function startDriftWatch() {
       stopDriftWatch();
       driftWatch = setInterval(function () {
@@ -375,8 +347,7 @@
         if (!vid || !activeAudio || isPreparingAudio) return;
         if (vid.paused || activeAudio.paused) return;
         const expected = expectedAudioTime(vid);
-        const drift = Math.abs(activeAudio.currentTime - expected);
-        if (drift > MAX_DRIFT_SECONDS) {
+        if (Math.abs(activeAudio.currentTime - expected) > MAX_DRIFT_SECONDS) {
           try { activeAudio.currentTime = expected; } catch (e) {}
         }
       }, DRIFT_CHECK_INTERVAL_MS);
@@ -385,28 +356,19 @@
       if (driftWatch) { clearInterval(driftWatch); driftWatch = null; }
     }
 
-    // Requests audio for `streamIndex` starting at `atTime` (defaults to the
-    // video's current position). Used both for picking a language AND for
-    // re-syncing after the user seeks while a language is already active.
-    function requestAudio(streamIndex, atTime) {
+    // forcePlay = true → always resume after prepare (used after seek)
+    function requestAudio(streamIndex, atTime, forcePlay) {
       const vid = getVideo();
       if (!vid) return;
 
-      // FIX: pause the video the instant a track is requested, before doing
-      // anything else. This is what actually closes the "video moves a bit"
-      // gap — setPreparing(true) below will also pause it, but we don't want
-      // to wait even the few ms that takes.
-      const wasPlayingBeforePause = !vid.paused;
-      if (wasPlayingBeforePause) vid.pause();
+      const wasPlayingBeforePause = (forcePlay === true) ? true : !vid.paused;
+      if (!vid.paused) vid.pause();
 
       const requestedTime = (atTime != null) ? atTime : (vid.currentTime || 0);
       const bucketStart = roundToBucket(requestedTime);
-      const correction = Math.max(0, requestedTime - bucketStart);
 
       initAudioContext(vid);
-
       const myRequestId = ++audioRequestId;
-      const wasPlaying = wasPlayingBeforePause;
 
       if (activeAudio) { try { activeAudio.pause(); } catch (e) {} }
       destroyAudio();
@@ -415,7 +377,7 @@
       activeBucketStart = bucketStart;
       silenceVideo(vid);
       setPreparing(true);
-      wantPlayWhenReady = wasPlaying;
+      wantPlayWhenReady = wasPlayingBeforePause;
 
       const audioEl = document.createElement('audio');
       audioEl.preload = 'auto';
@@ -426,22 +388,36 @@
       audioEl.addEventListener('canplay', function onCanPlay() {
         audioEl.removeEventListener('canplay', onCanPlay);
         if (myRequestId !== audioRequestId) {
-          // A newer request superseded this one (user seeked again fast) — drop it.
           try { audioEl.pause(); audioEl.remove(); } catch (e) {}
           return;
         }
         activeAudio = audioEl;
         syncVolume();
-        try { activeAudio.currentTime = correction; } catch (e) {}
+
+        // Match audio to CURRENT video time
+        const now = vid.currentTime || requestedTime;
+        const offset = Math.max(0, now - bucketStart);
+        try { activeAudio.currentTime = offset; } catch (e) {}
+
         setPreparing(false);
+
         if (wantPlayWhenReady) {
           wantPlayWhenReady = false;
-          activeAudio.play().catch(function(){});
-          vid.play().catch(function(){});
+          Promise.resolve()
+            .then(function () { return activeAudio.play(); })
+            .then(function () { return vid.play(); })
+            .then(function () {
+              try {
+                const n = vid.currentTime || 0;
+                activeAudio.currentTime = Math.max(0, n - bucketStart);
+              } catch (e) {}
+            })
+            .catch(function () {});
         }
         startDriftWatch();
         markActiveChip(streamIndex);
       });
+
       audioEl.addEventListener('error', function () {
         if (myRequestId !== audioRequestId) return;
         setPreparing(false);
@@ -452,22 +428,28 @@
       audioEl.load();
     }
 
-    // Called when the user seeks while a non-default language is active.
-    // Debounced so dragging the progress bar doesn't fire a request per pixel.
+    // Only on seeked (once). Remember if it was playing → auto-resume.
     function onSeekWhileActive() {
       if (activeTrackIdx === null) return;
+      const vid = getVideo();
+      if (!vid) return;
+
+      if (!vid.paused) wasPlayingBeforeSeek = true;
+
       if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
       seekDebounceTimer = setTimeout(function () {
-        const vid = getVideo();
-        if (!vid || activeTrackIdx === null) return;
-        requestAudio(activeTrackIdx, vid.currentTime);
+        const v = getVideo();
+        if (!v || activeTrackIdx === null) return;
+        const resume = wasPlayingBeforeSeek || !v.paused;
+        wasPlayingBeforeSeek = false;
+        requestAudio(activeTrackIdx, v.currentTime, resume);
       }, 450);
     }
 
     function switchToDefault() {
       const vid = getVideo();
       const wasPlaying = vid && !vid.paused;
-      audioRequestId++; // invalidate any in-flight request for a language track
+      audioRequestId++;
       setPreparing(false);
       wantPlayWhenReady = false;
       stopDriftWatch();
@@ -476,12 +458,15 @@
       activeBucketStart = 0;
       restoreVideoAudio(vid);
       markActiveChip(null);
-      if (vid && wasPlaying) vid.play().catch(function(){});
+      if (vid && wasPlaying) vid.play().catch(function () {});
     }
 
     function markActiveChip(streamIndex) {
       document.querySelectorAll('#audioPanel .chip').forEach(function (el) {
-        el.classList.toggle('active', String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex));
+        el.classList.toggle(
+          'active',
+          String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex)
+        );
       });
     }
 
@@ -547,54 +532,42 @@
         ensureAudioPlaying();
       });
       player.on('pause', function () {
-        // FIX: keep audio paused whenever the video is paused (manual pause,
-        // not just buffering), so they can't run ahead of each other.
         if (activeAudio && !activeAudio.paused) activeAudio.pause();
       });
-      // FIX: catch user seeks (scrubbing the progress bar / clicking ahead)
-      // so the active language track gets re-requested for the new position
-      // instead of silently staying at the old spot.
-      player.on('seeking', onSeekWhileActive);
+      // IMPORTANT: only seeked — not seeking (avoids double call / no autoplay)
 
       document.addEventListener('keydown', function (e) {
         if (!isPreparingAudio) return;
         const key = e.key.toLowerCase();
         if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') {
-          e.preventDefault(); e.stopPropagation();
+          e.preventDefault();
+          e.stopPropagation();
         }
       }, true);
 
       fetch(buildTracksUrl())
         .then(function (r) { return r.json(); })
         .then(function (tracks) {
-          if (Array.isArray(tracks) && tracks.length) {
-            fetchedTracks = tracks;
-            renderAudioPanel(tracks);
-          }
+          if (Array.isArray(tracks) && tracks.length) renderAudioPanel(tracks);
         })
         .catch(function () {});
 
       const vid = getVideo();
       if (vid) {
-        ['loadstart','waiting','stalled'].forEach(function (ev) {
+        ['loadstart', 'waiting', 'stalled'].forEach(function (ev) {
           vid.addEventListener(ev, function () {
             buffering = true;
             updateLoadingUI();
-            // FIX: pause the language audio track while the video buffers,
-            // instead of letting it keep playing ahead of a stalled video.
             if (activeAudio && !activeAudio.paused) activeAudio.pause();
           });
         });
-        ['canplay','playing','loadeddata'].forEach(function (ev) {
+        ['canplay', 'playing', 'loadeddata'].forEach(function (ev) {
           vid.addEventListener(ev, function () {
             buffering = false;
             updateLoadingUI();
-            // FIX: when the video resumes after buffering, snap audio back
-            // to the correct position (not just wherever it happened to be
-            // when it was paused) before letting it play again.
             if (activeAudio && !isPreparingAudio && !vid.paused) {
               try { activeAudio.currentTime = expectedAudioTime(vid); } catch (e) {}
-              if (activeAudio.paused) activeAudio.play().catch(function(){});
+              if (activeAudio.paused) activeAudio.play().catch(function () {});
             }
           });
         });
@@ -609,6 +582,7 @@
         vid.addEventListener('pause', function () {
           if (activeAudio && !activeAudio.paused) activeAudio.pause();
         });
+        // Only one seek handler
         vid.addEventListener('seeked', onSeekWhileActive);
       }
     });
