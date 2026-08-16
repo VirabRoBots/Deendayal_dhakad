@@ -8,10 +8,16 @@ import time
 from pathlib import Path
 
 from info import LOG_CHANNEL
-from Deendayal_botz.Bot import DeendayalBot, multi_clients, work_loads
-from Deendayal_botz.util.custom_dl import ByteStreamer
+from Deendayal_botz.Bot import DeendayalBot
 from Deendayal_botz.util.file_properties import get_file_ids
 from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
+
+# Port your aiohttp server is actually listening on. If your info.py
+# exposes a different name for this (e.g. WEB_SERVER_PORT), change the
+# import below to match — this MUST be the same port stream_handler
+# is bound to, since ffmpeg will hit http://127.0.0.1:<this>/... directly.
+from info import PORT as LOCAL_PORT
+LOCAL_PORT = int(LOCAL_PORT)
 
 TEMP_DIR = Path("/tmp/audio_cache")
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -20,8 +26,6 @@ _file_cache = {}
 _extract_locks = {}
 _inflight = {}
 
-TG_CHUNK_LIMIT = 1024 * 1024
-PROBE_BYTES = 4 * 1024 * 1024
 CACHE_MAX_AGE_SECONDS = 12 * 60 * 60
 CACHE_MIN_FREE_BYTES = 1 * 1024 ** 3
 SEEK_BUCKET_SECONDS = 10
@@ -41,6 +45,9 @@ def _meta(msg_id: int) -> dict:
 
 
 async def _get_file_id(msg_id: int, secure_hash: str):
+    """Validates the hash and confirms the file exists before we ask
+    ffmpeg/ffprobe to go fetch it — lets us fail fast with the right
+    HTTP error (403/404) instead of an opaque ffmpeg failure."""
     file_id = await get_file_ids(DeendayalBot, LOG_CHANNEL, msg_id)
     if not file_id:
         raise FIleNotFound
@@ -49,13 +56,16 @@ async def _get_file_id(msg_id: int, secure_hash: str):
     return file_id
 
 
-def _pick_client():
-    index = min(work_loads, key=work_loads.get)
-    return index, multi_clients[index]
+def _internal_stream_url(msg_id: int, secure_hash: str) -> str:
+    """Points at your own stream_handler route (the one that already
+    serves Range requests). ffmpeg reads from this like a browser would —
+    it can jump straight to a byte offset instead of reading from the
+    start. Must match the path shape parse_id_hash() expects:
+    <6-char hash><numeric id>, no separator."""
+    return f"http://127.0.0.1:{LOCAL_PORT}/{secure_hash}{msg_id}"
 
 
 def _codec_for_stream(msg_id: int, stream_index: int) -> str:
-    """Return codec_name for this stream index, if tracks were probed already."""
     tracks = _meta(msg_id).get("tracks") or []
     for t in tracks:
         if t.get("index") == stream_index:
@@ -68,36 +78,18 @@ async def get_tracks(msg_id: int, secure_hash: str) -> list:
     if entry["tracks"] is not None:
         return entry["tracks"]
 
-    file_id = await _get_file_id(msg_id, secure_hash)
-    index, client = _pick_client()
-    streamer = ByteStreamer(client)
-    part_count = max(1, PROBE_BYTES // TG_CHUNK_LIMIT)
+    await _get_file_id(msg_id, secure_hash)
+    internal_url = _internal_stream_url(msg_id, secure_hash)
 
     process = await asyncio.create_subprocess_exec(
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_streams", "-select_streams", "a",
-        "-i", "pipe:0",
-        stdin=asyncio.subprocess.PIPE,
+        "-timeout", "15000000",  # 15s, in microseconds
+        "-i", internal_url,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-
-    async def feed():
-        try:
-            async for chunk in streamer.yield_file(
-                file_id, index, 0, 0, TG_CHUNK_LIMIT, part_count, TG_CHUNK_LIMIT
-            ):
-                if chunk:
-                    process.stdin.write(chunk)
-        except Exception as e:
-            logging.error(f"[AudioTracks] probe feed error: {e}")
-        finally:
-            try:
-                process.stdin.close()
-            except Exception:
-                pass
-
-    await feed()
     stdout, stderr = await process.communicate()
 
     tracks = []
@@ -131,8 +123,10 @@ def _cached_audio_path(msg_id: int, stream_index: int, bucket_start: int) -> Pat
 async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int, start_time: float = 0.0):
     """
     Stream audio from start_time (bucketed).
-    If the track is already AAC → ffmpeg stream copy (fast).
-    Otherwise → encode to AAC.
+    ffmpeg fetches the source itself over HTTP (Range-capable), so seeking
+    to any point costs roughly the same regardless of how far into the
+    file it is — we're no longer downloading everything before that point.
+    If the track is already AAC → stream copy (fast). Otherwise → encode.
     """
     bucket_start = _round_start(start_time)
     cache_path = _cached_audio_path(msg_id, stream_index, bucket_start)
@@ -161,7 +155,7 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
         f"start={bucket_start}s"
     )
 
-    file_id = await _get_file_id(msg_id, secure_hash)
+    await _get_file_id(msg_id, secure_hash)
     lock = _extract_locks.setdefault(key, asyncio.Lock())
 
     async with lock:
@@ -171,68 +165,45 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
         if existing is not None:
             return _stream_from_inflight(existing)
 
-        index, client = _pick_client()
-        streamer = ByteStreamer(client)
-        file_size = file_id.file_size or 0
-        part_count = (
-            max(1, (file_size + TG_CHUNK_LIMIT - 1) // TG_CHUNK_LIMIT)
-            if file_size else 100000
-        )
-
+        internal_url = _internal_stream_url(msg_id, secure_hash)
         tmp_out = cache_path.with_suffix(".part.aac")
+
         cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-probesize", "2M", "-analyzeduration", "2M",
-            "-i", "pipe:0",
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-nostdin",
+            "-seekable", "1",
+            "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2",
+            "-timeout", "15000000",
         ]
         if bucket_start > 0:
+            # -ss BEFORE -i: ffmpeg seeks in the source before decoding,
+            # which is what lets it skip straight to this byte offset
+            # instead of decoding everything from the start.
             cmd += ["-ss", str(bucket_start)]
 
-        cmd += ["-map", f"0:{stream_index}"]
+        cmd += [
+            "-probesize", "2M", "-analyzeduration", "2M",
+            "-i", internal_url,
+            "-map", f"0:{stream_index}",
+        ]
 
         if use_copy:
-            # Already AAC → copy only (much faster, less CPU)
             cmd += ["-c:a", "copy", "-f", "adts"]
         else:
-            # AC3 / EAC3 / DTS / Opus / etc. → encode to AAC
-            cmd += ["-c:a", "aac", "-b:a", "96k", "-ac", "2", "-f", "adts"]
+            cmd += ["-c:a", "aac", "-b:a", "96k", "-ac", "2", "-threads", "0", "-f", "adts"]
 
         cmd += [str(tmp_out)]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            stdin=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-
-        async def feed_source():
-            try:
-                async for chunk in streamer.yield_file(
-                    file_id, index, 0, 0, TG_CHUNK_LIMIT, part_count, TG_CHUNK_LIMIT
-                ):
-                    if not chunk:
-                        continue
-                    try:
-                        proc.stdin.write(chunk)
-                        await proc.stdin.drain()
-                    except (ConnectionResetError, BrokenPipeError):
-                        break
-            except Exception as e:
-                logging.error(f"[AudioTracks] extract feed error: {e}")
-            finally:
-                try:
-                    proc.stdin.close()
-                except Exception:
-                    pass
-
-        feed_task = asyncio.create_task(feed_source())
 
         job = {
             "tmp_out": tmp_out,
             "cache_path": cache_path,
             "proc": proc,
-            "feed_task": feed_task,
             "done": asyncio.Event(),
             "ok": False,
         }
@@ -240,7 +211,6 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
 
         async def finalize():
             _, stderr = await proc.communicate()
-            await feed_task
             ok = proc.returncode == 0 and tmp_out.exists() and tmp_out.stat().st_size > 0
             if ok:
                 try:
@@ -251,8 +221,6 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
                     job["ok"] = False
             else:
                 logging.error(f"[AudioTracks] ffmpeg extraction failed: {stderr[:300]!r}")
-                # If copy failed (odd packaging), one retry with encode can help —
-                # left out here to keep logic simple; check logs for codec issues.
                 try:
                     if tmp_out.exists():
                         tmp_out.unlink()
