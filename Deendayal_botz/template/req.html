@@ -6,356 +6,105 @@
   <title>Deendayal | {{file_name}}</title>
   <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --cyan: #00f5d4;
-      --cyan2: #06d6b0;
-      --violet: #9d6fff;
-      --violet2: #7c3aed;
-      --pink: #ff6eb4;
-      --gold: #ffd60a;
-      --bg0: #04040f;
-      --bg1: #08081a;
-      --bg2: #0e0e24;
-      --glass: rgba(255,255,255,0.05);
-      --glass2: rgba(255,255,255,0.09);
-      --border: rgba(255,255,255,0.09);
-      --border2: rgba(157,111,255,0.25);
-      --text: #f1f5f9;
-      --muted: #94a3b8;
-      --text-muted: #475569;
-      --r: 16px;
-      --font-head: 'Space Grotesk', sans-serif;
-      --font-body: 'DM Sans', sans-serif;
+      --cyan: #00f5d4; --violet: #9d6fff; --violet2: #7c3aed; --bg0: #04040f;
+      --glass: rgba(255,255,255,0.05); --border: rgba(255,255,255,0.09);
+      --text: #f1f5f9; --muted: #94a3b8; --r: 16px;
+      --font-head: 'Space Grotesk', sans-serif; --font-body: 'DM Sans', sans-serif;
     }
-
     * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      background: var(--bg0);
-      color: var(--text);
-      font-family: var(--font-body);
-      min-height: 100vh;
-    }
-
+    body { background: var(--bg0); color: var(--text); font-family: var(--font-body); min-height: 100vh; }
     body::before {
-      content: '';
-      position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
       background:
         radial-gradient(ellipse 70% 50% at 15% 5%, rgba(157,111,255,.18) 0%, transparent 55%),
-        radial-gradient(ellipse 60% 45% at 85% 90%, rgba(0,245,212,.13) 0%, transparent 55%),
-        radial-gradient(ellipse 45% 40% at 50% 50%, rgba(255,110,180,.07) 0%, transparent 60%);
+        radial-gradient(ellipse 60% 45% at 85% 90%, rgba(0,245,212,.12) 0%, transparent 55%);
     }
-
-    .wrap {
-      position: relative; z-index: 1;
-      max-width: 960px; margin: 0 auto; padding: 16px;
-    }
-
-    /* ── HEADER ── */
-    header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 14px 0 18px;
-    }
+    .wrap { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 16px; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 14px 0 18px; }
     .brand {
-      font-family: var(--font-head); font-weight: 700; font-size: 1.25rem;
-      text-decoration: none;
+      font-family: var(--font-head); font-weight: 700; font-size: 1.25rem; text-decoration: none;
       background: linear-gradient(90deg, var(--cyan), var(--violet));
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     }
-    .live {
-      font-size: 0.75rem; color: var(--cyan);
-      border: 1px solid rgba(0,245,212,.35);
-      padding: 4px 10px; border-radius: 99px;
-      font-weight: 600;
-    }
-
-    /* ── PLAYER ── */
+    .live { font-size: 0.75rem; color: var(--cyan); border: 1px solid rgba(0,245,212,.35); padding: 4px 10px; border-radius: 99px; }
     .player-box {
-      position: relative; border-radius: var(--r); overflow: hidden;
-      background: #000;
-      box-shadow: 0 20px 50px rgba(0,0,0,.45);
-      border: 1px solid var(--border);
+      position: relative; border-radius: var(--r); overflow: hidden; background: #000;
+      box-shadow: 0 20px 50px rgba(0,0,0,.45); border: 1px solid var(--border);
     }
     .plyr { --plyr-color-main: var(--violet2); }
     .plyr.controls-locked .plyr__controls,
     .plyr.controls-locked .plyr__control--overlaid {
       opacity: 0 !important; visibility: hidden !important; pointer-events: none !important;
     }
-    .seek-blocked .plyr__progress input { pointer-events: none; }
-
     #mediaLoadingUI {
-      position: absolute; inset: 0; z-index: 9999;
-      background: rgba(4,4,15,.9);
-      display: none; align-items: center; justify-content: center;
-      flex-direction: column; gap: 14px; pointer-events: all;
+      position: absolute; inset: 0; z-index: 9999; background: rgba(4,4,15,.9);
+      display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px;
     }
     #mediaLoadingUI.show { display: flex; }
     .load-ring {
       width: 46px; height: 46px; border-radius: 50%;
-      border: 3px solid rgba(255,255,255,.12);
-      border-top-color: var(--cyan);
+      border: 3px solid rgba(255,255,255,.12); border-top-color: var(--cyan);
       animation: spin .85s linear infinite;
     }
     .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; }
     @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* ── FILE TITLE STRIP ── */
-    .file-title-strip {
-      margin-top: 14px;
-      background: linear-gradient(135deg, rgba(157,111,255,.08), rgba(0,245,212,.05));
-      border: 1px solid rgba(157,111,255,.25);
-      border-radius: var(--r);
-      padding: 13px 16px;
-      display: flex; align-items: center; gap: 12px;
-      box-shadow: 0 4px 20px rgba(157,111,255,.08);
+    .file-card {
+      margin-top: 16px; background: var(--glass); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 16px 18px;
     }
-    .file-title-icon { font-size: 1.6rem; flex-shrink: 0; }
-    .file-title-text {
-      font-family: var(--font-head); font-weight: 700; font-size: 1rem;
-      line-height: 1.4; word-break: break-word;
+    .file-title { font-family: var(--font-head); font-weight: 600; font-size: 1rem; word-break: break-word; margin-bottom: 6px; }
+    .file-meta { color: var(--muted); font-size: .85rem; }
+    .media-bar {
+      margin-top: 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px;
     }
-    .file-meta {
-      margin-top: 4px; color: var(--muted); font-size: .82rem;
-    }
-
-    /* ── REACTION BAR ── */
-    .reaction-bar {
-      display: flex; align-items: center; gap: 8px;
-      flex-wrap: wrap; margin-top: 13px;
-    }
-    .react-btn {
-      display: flex; align-items: center; gap: 6px;
-      padding: 8px 14px; border-radius: 10px;
-      border: 1px solid var(--border);
-      background: var(--glass);
-      color: var(--text); font-size: .82rem; font-weight: 600;
-      cursor: pointer; transition: all .2s;
-      font-family: var(--font-head);
-    }
-    .react-btn:hover {
-      background: rgba(157,111,255,.12);
-      border-color: rgba(157,111,255,.4);
-    }
-    .react-btn.sub {
-      background: linear-gradient(135deg, rgba(124,58,237,.4), rgba(0,245,212,.15));
-      border-color: rgba(157,111,255,.4);
-    }
-
-    /* ── MEDIA CONTROLS PANEL ── */
-    .media-controls-panel {
-      margin-top: 14px;
-      background: linear-gradient(135deg, rgba(157,111,255,.06), rgba(0,245,212,.03));
-      border: 1px solid rgba(157,111,255,.2);
-      border-radius: var(--r);
-      overflow: hidden;
-    }
-    .mcp-header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 11px 16px;
-      background: rgba(157,111,255,.05);
-      border-bottom: 1px solid rgba(157,111,255,.1);
-      flex-wrap: wrap; gap: 8px;
-    }
-    .mcp-title {
-      font-family: var(--font-head); font-size: .8rem; font-weight: 800;
-      letter-spacing: .5px; text-transform: uppercase;
-      display: flex; align-items: center; gap: 8px;
-    }
-    .mcp-title i { color: var(--cyan); }
-    .mcp-tabs { display: flex; gap: 6px; }
-    .mcp-tab {
-      padding: 6px 14px; border-radius: 20px;
-      border: 1px solid rgba(157,111,255,.2);
-      background: transparent;
-      color: var(--muted);
-      font-family: var(--font-head); font-size: .72rem; font-weight: 800;
-      cursor: pointer; transition: all .2s; letter-spacing: .4px;
-      text-transform: uppercase;
-    }
-    .mcp-tab:hover {
-      color: var(--text);
-      border-color: rgba(157,111,255,.4);
-      background: rgba(157,111,255,.08);
-    }
-    .mcp-tab.active {
-      background: rgba(157,111,255,.18);
-      border-color: rgba(157,111,255,.5);
-      color: var(--violet);
-    }
-    .mcp-body { padding: 14px 16px; display: none; }
-    .mcp-body.show { display: block; }
-    .mcp-panel { display: none; }
-    .mcp-panel.active { display: block; }
-
+    .media-bar .label { font-size: .8rem; color: var(--muted); font-weight: 600; }
     .chip {
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,.04);
-      color: var(--text);
-      border-radius: 99px;
-      padding: 8px 14px;
-      font-size: .82rem; font-weight: 500;
-      cursor: pointer; transition: all .2s;
+      border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text);
+      border-radius: 99px; padding: 8px 14px; font-size: .82rem; font-weight: 500; cursor: pointer;
     }
-    .chip:hover {
-      border-color: rgba(157,111,255,.45);
-      background: rgba(157,111,255,.12);
-    }
+    .chip:hover { border-color: rgba(157,111,255,.45); background: rgba(157,111,255,.12); }
     .chip.active {
-      border-color: var(--violet);
-      color: #fff;
+      border-color: var(--violet); color: #fff;
       background: linear-gradient(135deg, rgba(124,58,237,.45), rgba(0,245,212,.15));
     }
-    #audioPanel {
-      display: flex; flex-wrap: wrap; gap: 8px;
-    }
-
-    /* Subtitle controls */
-    .sub-toggle-row {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 12px;
-    }
-    .sub-toggle-label {
-      font-size: .85rem; font-weight: 600;
-      display: flex; align-items: center; gap: 6px;
-    }
-    .toggle-switch {
-      position: relative; width: 44px; height: 24px;
-    }
-    .toggle-switch input { opacity: 0; width: 0; height: 0; }
-    .toggle-slider {
-      position: absolute; cursor: pointer; inset: 0;
-      background: rgba(255,255,255,.12);
-      border-radius: 24px; transition: .25s;
-    }
-    .toggle-slider:before {
-      content: ""; position: absolute;
-      height: 18px; width: 18px; left: 3px; bottom: 3px;
-      background: #fff; border-radius: 50%; transition: .25s;
-    }
-    input:checked + .toggle-slider {
-      background: var(--violet);
-    }
-    input:checked + .toggle-slider:before {
-      transform: translateX(20px);
-    }
-
-    /* ── SECTION LABEL ── */
-    .section-label {
-      margin: 18px 0 10px;
-      font-family: var(--font-head); font-size: .78rem; font-weight: 800;
-      letter-spacing: .4px; text-transform: uppercase;
-      color: var(--muted);
-      display: flex; align-items: center; gap: 8px;
-    }
-    .section-label i { color: var(--violet); }
-
-    /* ── PLAY WITH + DOWNLOAD ── */
+    #audioPanel { display: none; width: 100%; margin-top: 8px; flex-wrap: wrap; gap: 8px; }
+    #audioPanel.show { display: flex; }
     .actions {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-      gap: 10px;
+      margin-top: 14px; display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;
     }
     .btn {
       display: flex; align-items: center; justify-content: center; gap: 8px;
-      padding: 12px 14px; border-radius: 12px;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,.04);
-      color: var(--text); text-decoration: none;
+      padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
+      background: rgba(255,255,255,.04); color: var(--text); text-decoration: none;
       font-size: .85rem; font-weight: 600; cursor: pointer;
-      transition: all .2s; font-family: var(--font-head);
     }
-    .btn:hover {
-      transform: translateY(-1px);
-      background: rgba(255,255,255,.08);
-    }
-    .btn.primary {
-      background: linear-gradient(135deg, var(--violet2), #a855f7);
-      border-color: transparent;
-    }
-    .btn.mx {
-      background: linear-gradient(135deg, #1a73e8, #3b82f6);
-      border: none;
-    }
-    .btn.vlc {
-      background: linear-gradient(135deg, #e65100, #ff6d00);
-      border: none;
-    }
-    .btn.playit {
-      background: linear-gradient(135deg, #7c3aed, #a855f7);
-      border: none;
-    }
-
-    /* ── NOTE ── */
+    .btn.primary { background: linear-gradient(135deg, var(--violet2), #a855f7); border-color: transparent; }
+    .btn.mx { background: linear-gradient(135deg, #1a73e8, #3b82f6); border: none; }
+    .btn.vlc { background: linear-gradient(135deg, #e65100, #ff6d00); border: none; }
+    .btn.playit { background: linear-gradient(135deg, #7c3aed, #a855f7); border: none; }
     .note {
-      margin-top: 16px;
-      padding: 12px 14px;
-      border-left: 3px solid var(--cyan);
-      background: rgba(0,245,212,.06);
-      border-radius: 0 10px 10px 0;
+      margin-top: 16px; padding: 12px 14px; border-left: 3px solid var(--cyan);
+      background: rgba(0,245,212,.06); border-radius: 0 10px 10px 0;
       color: var(--muted); font-size: .82rem; line-height: 1.5;
     }
-
-    /* ── DISCLAIMER ── */
-    .disclaimer {
-      margin-top: 20px;
-      color: #334155; font-size: .78rem; line-height: 1.5;
-      text-align: center;
-    }
-
-    /* ── FOOTER ── */
-    footer {
-      margin-top: 28px; text-align: center;
-      color: #475569; font-size: .75rem; padding-bottom: 24px;
-    }
-
-    /* ── PLYR MENU DARK THEME ── */
-    .plyr__menu__container {
-      background: rgba(8,8,26,.96) !important;
-      border: 1px solid rgba(157,111,255,.28) !important;
-      border-radius: 12px !important;
-      box-shadow: 0 12px 32px rgba(0,0,0,.55) !important;
-      color: #f1f5f9 !important;
-      font-family: var(--font-body) !important;
-    }
-    .plyr__menu__container:after {
-      border-top-color: rgba(8,8,26,.96) !important;
-    }
-    .plyr__menu__container .plyr__control--back {
-      color: var(--cyan) !important;
-      background: rgba(0,245,212,.06) !important;
-      border-radius: 8px !important;
-    }
-    .plyr__menu__container .plyr__control--back:after {
-      border-right-color: var(--cyan) !important;
-    }
-    .plyr__menu__container .plyr__control {
-      color: #e2e8f0 !important;
-      border-radius: 8px !important;
-    }
-    .plyr__menu__container .plyr__control:hover {
-      background: rgba(157,111,255,.18) !important;
-      color: #fff !important;
-    }
-    .plyr__menu__container .plyr__control[role="menuitemradio"][aria-checked="true"]:before {
-      background: var(--violet) !important;
-    }
+    footer { margin-top: 28px; text-align: center; color: #475569; font-size: .75rem; padding-bottom: 24px; }
   </style>
 </head>
 <body>
   <div class="wrap">
-
-    <!-- HEADER -->
     <header>
       <a class="brand" href="https://t.me/Deendayal_dhakad">Deendayal Stream</a>
       <span class="live">● LIVE</span>
     </header>
 
-    <!-- PLAYER -->
     <div class="player-box">
       <video id="player" playsinline preload="metadata" controls>
-        <source src="{{file_url}}">
+        <source src="{{file_url}}" id="videoSource">
       </video>
       <div id="mediaLoadingUI">
         <div class="load-ring"></div>
@@ -363,157 +112,42 @@
       </div>
     </div>
 
-    <!-- FILE TITLE STRIP -->
-    <div class="file-title-strip">
-      <div class="file-title-icon">🎬</div>
-      <div>
-        <div class="file-title-text">{{file_name}}</div>
-        <div class="file-meta">Size: {{file_size}}</div>
-      </div>
+    <div class="file-card">
+      <div class="file-title">{{file_name}}</div>
+      <div class="file-meta">Size: {{file_size}}</div>
     </div>
 
-    <!-- REACTION BAR -->
-    <div class="reaction-bar">
-      <button class="react-btn" type="button">
-        <i class="fa-solid fa-thumbs-up"></i> <span>0</span>
-      </button>
-      <button class="react-btn" type="button">
-        <i class="fa-solid fa-thumbs-down"></i> <span>0</span>
-      </button>
-      <button class="react-btn" type="button" style="color:#f87171">
-        <i class="fa-solid fa-flag"></i> Report
-      </button>
-      <button class="react-btn sub" type="button">
-        <i class="fa-solid fa-bell"></i> Subscribe
-      </button>
+    <div class="media-bar">
+      <span class="label"><i class="fa-solid fa-music"></i> AUDIO</span>
+      <button class="chip" id="btnAudio" type="button">Tracks</button>
+      <div id="audioPanel"></div>
     </div>
 
-    <!-- MEDIA CONTROLS (Audio + Subtitles only) -->
-    <div class="media-controls-panel">
-      <div class="mcp-header">
-        <span class="mcp-title"><i class="fa-solid fa-sliders"></i> Media Controls</span>
-        <div class="mcp-tabs">
-          <button class="mcp-tab active" type="button" onclick="switchMCP('audio', this)">🎵 Audio</button>
-          <button class="mcp-tab" type="button" onclick="switchMCP('subtitle', this)">💬 Subtitles</button>
-        </div>
-      </div>
-      <div class="mcp-body show" id="mcpBody">
-        <!-- AUDIO -->
-        <div class="mcp-panel active" id="mcp-audio">
-          <div id="audioPanel">
-            <div style="color:var(--muted);font-size:.82rem;padding:6px 0">
-              Loading audio tracks…
-            </div>
-          </div>
-        </div>
-        <!-- SUBTITLES -->
-        <div class="mcp-panel" id="mcp-subtitle">
-          <div class="sub-toggle-row">
-            <span class="sub-toggle-label">
-              <i class="fa-solid fa-closed-captioning" style="color:var(--violet)"></i>
-              Subtitles
-            </span>
-            <label class="toggle-switch">
-              <input type="checkbox" id="subToggle">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div style="color:var(--muted);font-size:.82rem">
-            No external subtitles available for this file.
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- PLAY WITH -->
-    <div class="section-label"><i class="fa-solid fa-play-circle"></i> Play With</div>
     <div class="actions">
-      <a class="btn mx" id="mxLink" href="#"><i class="fa-solid fa-play"></i> MX Player</a>
+      <a class="btn primary" href="{{file_url}}" download><i class="fa-solid fa-download"></i> Download</a>
+      <button class="btn" type="button" onclick="copyLink()"><i class="fa-solid fa-link"></i> Copy Link</button>
+      <a class="btn mx" id="mxLink" href="#"><i class="fa-solid fa-play"></i> MX</a>
       <a class="btn vlc" id="vlcLink" href="#"><i class="fa-solid fa-play"></i> VLC</a>
       <a class="btn playit" id="playitLink" href="#"><i class="fa-solid fa-play"></i> PlayIt</a>
     </div>
 
-    <!-- GET FILE -->
-    <div class="section-label"><i class="fa-solid fa-download"></i> Get File</div>
-    <div class="actions">
-      <a class="btn primary" href="{{file_url}}" download>
-        <i class="fa-solid fa-download"></i> Download
-      </a>
-      <button class="btn" type="button" onclick="copyLink()">
-        <i class="fa-solid fa-link"></i> Copy Link
-      </button>
-    </div>
-
-    <!-- NOTE -->
     <div class="note">
-      Multi-audio in browser. First switch/seek may take a moment. For best multi-audio use MX or VLC.
+      Language switch builds one stream (video + audio). First switch may take a moment; then play continues while data loads.
+      MX / VLC still use the original multi-audio file.
     </div>
-
-    <!-- DISCLAIMER -->
-    <div class="disclaimer">
-      This platform provides high-speed streaming and download services. Strictly for personal use.
-    </div>
-
-    <!-- FOOTER -->
     <footer>© Deendayal Stream · For personal use only</footer>
   </div>
 
   <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
   <script>
-    const STREAM_URL = "{{file_url}}";
-    const SEEK_BUCKET_SECONDS = 10;
-    const MAX_DRIFT = 0.18;
-
+    const ORIGINAL_URL = "{{file_url}}";
     let player = null;
-    let activeAudio = null;
     let activeTrackIdx = null;
-    let activeBucketStart = 0;
-    let isPreparingAudio = false;
-    let wantPlayWhenReady = false;
-    let prepareWatch = null;
-    let buffering = false;
-    let audioCtx = null;
-    let vidGainNode = null;
-    let useFallbackMute = false;
-    let audioRequestId = 0;
-    let seekDebounceTimer = null;
-    let wasPlayingBeforeSeek = false;
-    let lastSyncAt = 0;
+    let switching = false;
 
-    function roundToBucket(t) {
-      return Math.round(t / SEEK_BUCKET_SECONDS) * SEEK_BUCKET_SECONDS;
-    }
-    function buildAudioUrl(streamIndex, atTime) {
-      const u = new URL(STREAM_URL, window.location.origin);
-      const pathParts = u.pathname.split('/').filter(Boolean);
-      u.pathname = '/audio/' + streamIndex + '/' + pathParts.join('/');
-      u.searchParams.set('t', String(Math.max(0, atTime || 0)));
-      return u.toString();
-    }
-    function buildTracksUrl() {
-      const u = new URL(STREAM_URL, window.location.origin);
-      const pathParts = u.pathname.split('/').filter(Boolean);
-      u.pathname = '/api/tracks/' + pathParts.join('/');
-      return u.toString();
-    }
-    const LANG_MAP = {
-      eng:'English', en:'English', hin:'Hindi', hi:'Hindi',
-      tam:'Tamil', ta:'Tamil', tel:'Telugu', te:'Telugu',
-      mal:'Malayalam', ml:'Malayalam', kan:'Kannada', kn:'Kannada',
-      ben:'Bengali', bn:'Bengali', pan:'Punjabi', pa:'Punjabi'
-    };
-    function trackLabel(track, idx) {
-      const meta = track.tags || {};
-      const lang = (meta.language || '').toLowerCase();
-      const title = meta.title || '';
-      let label = LANG_MAP[lang] || lang || ('Track ' + (idx + 1));
-      if (idx === 0) label += ' (Default)';
-      if (title && title.length < 40) label += ' — ' + title;
-      return label;
-    }
     function getVideo() { return document.querySelector('#player'); }
 
-    function showLoadingUI(show, text) {
+    function showLoading(show, text) {
       const el = document.getElementById('mediaLoadingUI');
       const txt = document.getElementById('mediaLoadingText');
       const plyrEl = document.querySelector('.plyr');
@@ -526,205 +160,114 @@
         if (plyrEl) plyrEl.classList.remove('controls-locked');
       }
     }
-    function updateLoadingUI() {
-      if (isPreparingAudio) { showLoadingUI(true, 'Preparing audio…'); return; }
-      if (buffering) { showLoadingUI(true, 'Loading…'); return; }
-      showLoadingUI(false);
-    }
-    function forcePauseIfPreparing() {
-      if (!isPreparingAudio) return;
-      const vid = getVideo();
-      if (vid && !vid.paused) { vid.pause(); wantPlayWhenReady = true; }
-      if (player && player.playing) { player.pause(); wantPlayWhenReady = true; }
-    }
-    function setPreparing(on) {
-      isPreparingAudio = on;
-      const plyrEl = document.querySelector('.plyr');
-      if (plyrEl) {
-        if (on) plyrEl.classList.add('seek-blocked');
-        else plyrEl.classList.remove('seek-blocked');
-      }
-      if (on) {
-        forcePauseIfPreparing();
-        if (prepareWatch) clearInterval(prepareWatch);
-        prepareWatch = setInterval(forcePauseIfPreparing, 80);
-      } else if (prepareWatch) {
-        clearInterval(prepareWatch); prepareWatch = null;
-      }
-      updateLoadingUI();
+
+    function buildMuxUrl(streamIndex, atTime) {
+      const u = new URL(ORIGINAL_URL, window.location.origin);
+      const parts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/mux/' + streamIndex + '/' + parts.join('/');
+      if (atTime > 0) u.searchParams.set('t', String(Math.floor(atTime)));
+      return u.toString();
     }
 
-    function initAudioContext(vid) {
-      if (!vid) return;
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) { useFallbackMute = true; return; }
-      try {
-        if (!audioCtx) audioCtx = new AC();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        if (!vid.__audioConnected) {
-          const src = audioCtx.createMediaElementSource(vid);
-          vidGainNode = audioCtx.createGain();
-          src.connect(vidGainNode);
-          vidGainNode.connect(audioCtx.destination);
-          vid.__audioConnected = true;
-        }
-        if (vidGainNode) vidGainNode.gain.value = (activeTrackIdx !== null) ? 0 : 1;
-      } catch (e) { useFallbackMute = true; }
-    }
-    function silenceVideo(vid) {
-      initAudioContext(vid);
-      if (useFallbackMute) { if (vid) vid.muted = true; return; }
-      if (vidGainNode) vidGainNode.gain.value = 0;
-    }
-    function restoreVideoAudio(vid) {
-      if (useFallbackMute) { if (vid) vid.muted = false; return; }
-      if (vidGainNode) vidGainNode.gain.value = 1;
-    }
-    function destroyAudio() {
-      if (!activeAudio) return;
-      try {
-        activeAudio.pause();
-        activeAudio.removeAttribute('src');
-        activeAudio.load();
-        activeAudio.remove();
-      } catch (e) {}
-      activeAudio = null;
-    }
-    function syncVolume() {
-      if (!activeAudio || !player) return;
-      activeAudio.volume = player.volume;
-      activeAudio.muted = player.muted;
-    }
-    function ensureAudioPlaying() {
-      const vid = getVideo();
-      if (!activeAudio || !vid || isPreparingAudio) return;
-      if (!vid.paused && activeAudio.paused) activeAudio.play().catch(function () {});
-      if (vid.paused && !activeAudio.paused) activeAudio.pause();
+    function buildTracksUrl() {
+      const u = new URL(ORIGINAL_URL, window.location.origin);
+      const parts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/api/tracks/' + parts.join('/');
+      return u.toString();
     }
 
-    function followVideoClock(force) {
-      const vid = getVideo();
-      if (!vid || !activeAudio || isPreparingAudio) return;
-      if (vid.paused && !force) return;
-      const expected = Math.max(0, (vid.currentTime || 0) - activeBucketStart);
-      const drift = Math.abs((activeAudio.currentTime || 0) - expected);
-      if (force || drift > MAX_DRIFT) {
-        try { activeAudio.currentTime = expected; } catch (e) {}
-      }
-    }
+    const LANG_MAP = {
+      eng:'English', en:'English', hin:'Hindi', hi:'Hindi',
+      tam:'Tamil', ta:'Tamil', tel:'Telugu', te:'Telugu',
+      mal:'Malayalam', ml:'Malayalam', kan:'Kannada', kn:'Kannada',
+      ben:'Bengali', bn:'Bengali', pan:'Punjabi', pa:'Punjabi'
+    };
 
-    function requestAudio(streamIndex, atTime, forcePlay) {
-      const vid = getVideo();
-      if (!vid) return;
-
-      const wasPlaying = (forcePlay === true) ? true : !vid.paused;
-      if (!vid.paused) vid.pause();
-
-      const targetTime = (atTime != null) ? atTime : (vid.currentTime || 0);
-      const bucketStart = roundToBucket(targetTime);
-
-      initAudioContext(vid);
-      const myId = ++audioRequestId;
-
-      if (activeAudio) { try { activeAudio.pause(); } catch (e) {} }
-      destroyAudio();
-
-      activeTrackIdx = streamIndex;
-      activeBucketStart = bucketStart;
-      silenceVideo(vid);
-      setPreparing(true);
-      wantPlayWhenReady = wasPlaying;
-
-      try { vid.currentTime = targetTime; } catch (e) {}
-
-      const audioEl = document.createElement('audio');
-      audioEl.preload = 'auto';
-      audioEl.style.display = 'none';
-      document.body.appendChild(audioEl);
-      audioEl.src = buildAudioUrl(streamIndex, bucketStart);
-
-      audioEl.addEventListener('canplay', function onCanPlay() {
-        audioEl.removeEventListener('canplay', onCanPlay);
-        if (myId !== audioRequestId) {
-          try { audioEl.pause(); audioEl.remove(); } catch (e) {}
-          return;
-        }
-        activeAudio = audioEl;
-        syncVolume();
-
-        try { vid.currentTime = targetTime; } catch (e) {}
-        try { activeAudio.currentTime = Math.max(0, targetTime - bucketStart); } catch (e) {}
-
-        setPreparing(false);
-
-        function go() {
-          try { vid.currentTime = targetTime; } catch (e) {}
-          try { activeAudio.currentTime = Math.max(0, targetTime - bucketStart); } catch (e) {}
-          return activeAudio.play()
-            .then(function () { return vid.play(); })
-            .then(function () {
-              followVideoClock(true);
-              setTimeout(function () { followVideoClock(true); }, 150);
-              setTimeout(function () { followVideoClock(true); }, 400);
-              setTimeout(function () { followVideoClock(true); }, 900);
-            })
-            .catch(function () {});
-        }
-
-        if (wantPlayWhenReady) {
-          wantPlayWhenReady = false;
-          go();
-        }
-        markActiveChip(streamIndex);
-      });
-
-      audioEl.addEventListener('error', function () {
-        if (myId !== audioRequestId) return;
-        setPreparing(false);
-        wantPlayWhenReady = false;
-        switchToDefault();
-        alert('Selected audio track failed. Switched back to default.');
-      });
-      audioEl.load();
-    }
-
-    function onSeekWhileActive() {
-      if (activeTrackIdx === null) return;
-      const vid = getVideo();
-      if (!vid) return;
-      if (!vid.paused) wasPlayingBeforeSeek = true;
-      if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
-      seekDebounceTimer = setTimeout(function () {
-        const v = getVideo();
-        if (!v || activeTrackIdx === null) return;
-        const resume = wasPlayingBeforeSeek || !v.paused;
-        wasPlayingBeforeSeek = false;
-        requestAudio(activeTrackIdx, v.currentTime, resume);
-      }, 400);
-    }
-
-    function switchToDefault() {
-      const vid = getVideo();
-      const wasPlaying = vid && !vid.paused;
-      audioRequestId++;
-      setPreparing(false);
-      wantPlayWhenReady = false;
-      destroyAudio();
-      activeTrackIdx = null;
-      activeBucketStart = 0;
-      restoreVideoAudio(vid);
-      markActiveChip(null);
-      if (vid && wasPlaying) vid.play().catch(function () {});
+    function trackLabel(track, idx) {
+      const meta = track.tags || {};
+      const lang = (meta.language || '').toLowerCase();
+      const title = meta.title || '';
+      let label = LANG_MAP[lang] || lang || ('Track ' + (idx + 1));
+      if (idx === 0) label += ' (Default)';
+      if (title && title.length < 40) label += ' — ' + title;
+      return label;
     }
 
     function markActiveChip(streamIndex) {
       document.querySelectorAll('#audioPanel .chip').forEach(function (el) {
-        el.classList.toggle('active', String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex));
+        el.classList.toggle(
+          'active',
+          String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex)
+        );
       });
     }
+
+    function setVideoSource(url, wasPlaying) {
+      const vid = getVideo();
+      if (!vid) return;
+      switching = true;
+      showLoading(true, 'Preparing audio…');
+
+      const onReady = function () {
+        vid.removeEventListener('loadeddata', onReady);
+        switching = false;
+        showLoading(false);
+        if (wasPlaying) vid.play().catch(function () {});
+      };
+      vid.addEventListener('loadeddata', onReady);
+
+      if (player) {
+        player.source = {
+          type: 'video',
+          sources: [{ src: url, type: 'video/mp4' }]
+        };
+      } else {
+        vid.src = url;
+        vid.load();
+      }
+
+      // safety timeout so UI never sticks forever
+      setTimeout(function () {
+        if (switching) {
+          switching = false;
+          showLoading(false);
+        }
+      }, 120000);
+    }
+
+    function switchLanguage(streamIndex) {
+      const vid = getVideo();
+      if (!vid || switching) return;
+
+      const wasPlaying = !vid.paused;
+      const t = vid.currentTime || 0;
+      vid.pause();
+
+      if (streamIndex === null || streamIndex === 'default') {
+        activeTrackIdx = null;
+        markActiveChip(null);
+        // original file — browser seek after load
+        setVideoSource(ORIGINAL_URL, wasPlaying);
+        const vid2 = getVideo();
+        const seekAfter = function () {
+          vid2.removeEventListener('loadeddata', seekAfter);
+          try { if (t > 0) vid2.currentTime = t; } catch (e) {}
+        };
+        vid2.addEventListener('loadeddata', seekAfter);
+        return;
+      }
+
+      activeTrackIdx = streamIndex;
+      markActiveChip(streamIndex);
+      // server starts near t via ?t=
+      setVideoSource(buildMuxUrl(streamIndex, t), wasPlaying);
+    }
+
     function renderAudioPanel(tracks) {
       const panel = document.getElementById('audioPanel');
-      if (!panel || !tracks || tracks.length < 2) {
+      if (!panel) return;
+      if (!tracks || tracks.length < 2) {
+        document.getElementById('btnAudio').style.display = 'none';
         return;
       }
       panel.innerHTML = '';
@@ -735,69 +278,51 @@
         b.dataset.index = idx === 0 ? 'default' : track.index;
         b.textContent = trackLabel(track, idx);
         b.onclick = function () {
-          if (idx === 0) switchToDefault();
-          else requestAudio(track.index);
+          if (idx === 0) switchLanguage(null);
+          else switchLanguage(track.index);
         };
         panel.appendChild(b);
       });
     }
 
-    // Media Controls tab switcher
-    function switchMCP(tab, btn) {
-      document.querySelectorAll('.mcp-tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.mcp-panel').forEach(p => p.classList.remove('active'));
-      btn.classList.add('active');
-      const panel = document.getElementById('mcp-' + tab);
-      if (panel) panel.classList.add('active');
-      document.getElementById('mcpBody').classList.add('show');
-    }
+    document.getElementById('btnAudio').addEventListener('click', function () {
+      document.getElementById('audioPanel').classList.toggle('show');
+    });
 
     (function () {
-      const intent = 'intent://' + STREAM_URL.replace(/^https?:\/\//, '') + '#Intent;type=video/*;';
-      document.getElementById('vlcLink').href = 'vlc://' + STREAM_URL;
+      const intent = 'intent://' + ORIGINAL_URL.replace(/^https?:\/\//, '') + '#Intent;type=video/*;';
+      document.getElementById('vlcLink').href = 'vlc://' + ORIGINAL_URL;
       document.getElementById('mxLink').href = intent + 'package=com.mxtech.videoplayer.ad;end';
       document.getElementById('playitLink').href = intent + 'package=com.jio.media.jiobeats;end';
     })();
 
     function copyLink() {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied!'); })
-          .catch(function () { prompt('Copy this link:', STREAM_URL); });
-      } else prompt('Copy this link:', STREAM_URL);
+        navigator.clipboard.writeText(ORIGINAL_URL).then(function () { alert('Link copied!'); })
+          .catch(function () { prompt('Copy this link:', ORIGINAL_URL); });
+      } else prompt('Copy this link:', ORIGINAL_URL);
     }
 
     document.addEventListener('DOMContentLoaded', function () {
-      showLoadingUI(true, 'Loading…');
+      showLoading(true, 'Loading…');
       player = new Plyr('#player', {
         controls: ['play-large','rewind','play','fast-forward','progress','current-time','duration','mute','volume','settings','fullscreen'],
         settings: ['speed'],
         speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
         seekTime: 10
       });
-      player.on('volumechange', syncVolume);
-      player.on('play', function () {
-        if (isPreparingAudio) {
-          player.pause();
-          const vid = getVideo();
-          if (vid) vid.pause();
-          wantPlayWhenReady = true;
-          updateLoadingUI();
-          return;
-        }
-        ensureAudioPlaying();
-        followVideoClock(true);
-      });
-      player.on('pause', function () {
-        if (activeAudio && !activeAudio.paused) activeAudio.pause();
-      });
 
-      document.addEventListener('keydown', function (e) {
-        if (!isPreparingAudio) return;
-        const key = e.key.toLowerCase();
-        if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') {
-          e.preventDefault(); e.stopPropagation();
-        }
-      }, true);
+      const vid = getVideo();
+      if (vid) {
+        ['loadeddata', 'canplay', 'playing'].forEach(function (ev) {
+          vid.addEventListener(ev, function () {
+            if (!switching) showLoading(false);
+          });
+        });
+        vid.addEventListener('waiting', function () {
+          if (!switching) showLoading(true, 'Loading…');
+        });
+      }
 
       fetch(buildTracksUrl())
         .then(function (r) { return r.json(); })
@@ -805,44 +330,6 @@
           if (Array.isArray(tracks) && tracks.length) renderAudioPanel(tracks);
         })
         .catch(function () {});
-
-      const vid = getVideo();
-      if (vid) {
-        vid.addEventListener('timeupdate', function () {
-          if (!activeAudio || isPreparingAudio) return;
-          const now = performance.now();
-          if (now - lastSyncAt < 250) return;
-          lastSyncAt = now;
-          followVideoClock(false);
-        });
-
-        ['loadstart','waiting','stalled'].forEach(function (ev) {
-          vid.addEventListener(ev, function () {
-            buffering = true; updateLoadingUI();
-            if (activeAudio && !activeAudio.paused) activeAudio.pause();
-          });
-        });
-        ['canplay','playing','loadeddata'].forEach(function (ev) {
-          vid.addEventListener(ev, function () {
-            buffering = false; updateLoadingUI();
-            if (activeAudio && !isPreparingAudio && !vid.paused) {
-              followVideoClock(true);
-              if (activeAudio.paused) activeAudio.play().catch(function () {});
-            }
-          });
-        });
-        vid.addEventListener('play', function () {
-          if (isPreparingAudio) {
-            vid.pause(); wantPlayWhenReady = true; return;
-          }
-          ensureAudioPlaying();
-          followVideoClock(true);
-        });
-        vid.addEventListener('pause', function () {
-          if (activeAudio && !activeAudio.paused) activeAudio.pause();
-        });
-        vid.addEventListener('seeked', onSeekWhileActive);
-      }
     });
   </script>
 </body>
