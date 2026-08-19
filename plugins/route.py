@@ -9,7 +9,7 @@ from Deendayal_botz.Bot import multi_clients, work_loads, DeendayalBot
 from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 from Deendayal_botz.util.custom_dl import ByteStreamer
 from Deendayal_botz.util.render_template import render_page
-from Deendayal_botz.util.audio_tracks import get_tracks, extract_audio_stream
+from Deendayal_botz.util.audio_tracks import get_tracks, mux_av_stream
 from info import *
 
 routes = web.RouteTableDef()
@@ -66,16 +66,13 @@ async def tracks_handler(request: web.Request):
         raise web.HTTPInternalServerError(text=str(e))
 
 
-@routes.get(r"/audio/{stream_index:\d+}/{path:\S+}", allow_head=True)
-async def audio_handler(request: web.Request):
+@routes.get(r"/mux/{stream_index:\d+}/{path:\S+}", allow_head=True)
+async def mux_handler(request: web.Request):
     try:
         path = request.match_info["path"]
         stream_index = int(request.match_info["stream_index"])
         id, secure_hash = parse_id_hash(path, request)
 
-        # ?t=<seconds> tells us where in the video the player currently is,
-        # so extraction can start there instead of always from 0. Defaults
-        # to 0 (start of track) if not given or invalid.
         start_time = 0.0
         raw_t = request.rel_url.query.get("t")
         if raw_t:
@@ -84,24 +81,13 @@ async def audio_handler(request: web.Request):
             except ValueError:
                 start_time = 0.0
 
-        body = await extract_audio_stream(id, secure_hash, stream_index, start_time)
-        return web.Response(
-            status=200,
-            body=body,
-            headers={
-                "Content-Type": "audio/aac",
-                "Accept-Ranges": "bytes",
-                "Cache-Control": "no-store",
-            },
-        )
+        return await mux_av_stream(request, id, secure_hash, stream_index, start_time)
     except InvalidHash as e:
         raise web.HTTPForbidden(text=e.message)
     except FIleNotFound as e:
         raise web.HTTPNotFound(text=e.message)
-    except (AttributeError, BadStatusLine, ConnectionResetError):
-        pass
     except Exception as e:
-        logging.exception("audio_handler error")
+        logging.exception("mux_handler error")
         raise web.HTTPInternalServerError(text=str(e))
 
 
