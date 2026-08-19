@@ -6,76 +6,353 @@
   <title>Deendayal | {{file_name}}</title>
   <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --cyan: #00f5d4; --violet: #9d6fff; --violet2: #7c3aed; --bg0: #04040f;
-      --glass: rgba(255,255,255,0.05); --border: rgba(255,255,255,0.09);
-      --text: #f1f5f9; --muted: #94a3b8; --r: 16px;
-      --font-head: 'Space Grotesk', sans-serif; --font-body: 'DM Sans', sans-serif;
+      --cyan: #00f5d4;
+      --cyan2: #06d6b0;
+      --violet: #9d6fff;
+      --violet2: #7c3aed;
+      --pink: #ff6eb4;
+      --gold: #ffd60a;
+      --bg0: #04040f;
+      --bg1: #08081a;
+      --bg2: #0e0e24;
+      --glass: rgba(255,255,255,0.05);
+      --glass2: rgba(255,255,255,0.09);
+      --border: rgba(255,255,255,0.09);
+      --border2: rgba(157,111,255,0.25);
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --text-muted: #475569;
+      --r: 16px;
+      --font-head: 'Space Grotesk', sans-serif;
+      --font-body: 'DM Sans', sans-serif;
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: var(--bg0); color: var(--text); font-family: var(--font-body); min-height: 100vh; }
+
+    body {
+      background: var(--bg0);
+      color: var(--text);
+      font-family: var(--font-body);
+      min-height: 100vh;
+    }
+
     body::before {
-      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      content: '';
+      position: fixed; inset: 0; pointer-events: none; z-index: 0;
       background:
         radial-gradient(ellipse 70% 50% at 15% 5%, rgba(157,111,255,.18) 0%, transparent 55%),
-        radial-gradient(ellipse 60% 45% at 85% 90%, rgba(0,245,212,.12) 0%, transparent 55%);
+        radial-gradient(ellipse 60% 45% at 85% 90%, rgba(0,245,212,.13) 0%, transparent 55%),
+        radial-gradient(ellipse 45% 40% at 50% 50%, rgba(255,110,180,.07) 0%, transparent 60%);
     }
-    .wrap { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 16px; }
-    header { display: flex; align-items: center; justify-content: space-between; padding: 14px 0 18px; }
+
+    .wrap {
+      position: relative; z-index: 1;
+      max-width: 960px; margin: 0 auto; padding: 16px;
+    }
+
+    /* ── HEADER ── */
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 0 18px;
+    }
     .brand {
-      font-family: var(--font-head); font-weight: 700; font-size: 1.25rem; text-decoration: none;
+      font-family: var(--font-head); font-weight: 700; font-size: 1.25rem;
+      text-decoration: none;
       background: linear-gradient(90deg, var(--cyan), var(--violet));
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     }
-    .live { font-size: 0.75rem; color: var(--cyan); border: 1px solid rgba(0,245,212,.35); padding: 4px 10px; border-radius: 99px; }
+    .live {
+      font-size: 0.75rem; color: var(--cyan);
+      border: 1px solid rgba(0,245,212,.35);
+      padding: 4px 10px; border-radius: 99px;
+      font-weight: 600;
+    }
+
+    /* ── PLAYER ── */
     .player-box {
-      position: relative; border-radius: var(--r); overflow: hidden; background: #000;
-      box-shadow: 0 20px 50px rgba(0,0,0,.45); border: 1px solid var(--border);
+      position: relative; border-radius: var(--r); overflow: hidden;
+      background: #000;
+      box-shadow: 0 20px 50px rgba(0,0,0,.45);
+      border: 1px solid var(--border);
     }
     .plyr { --plyr-color-main: var(--violet2); }
     .plyr.controls-locked .plyr__controls,
-    .plyr.controls-locked .plyr__control--overlaid { opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
+    .plyr.controls-locked .plyr__control--overlaid {
+      opacity: 0 !important; visibility: hidden !important; pointer-events: none !important;
+    }
     .seek-blocked .plyr__progress input { pointer-events: none; }
+
     #mediaLoadingUI {
-      position: absolute; inset: 0; z-index: 9999; background: rgba(4,4,15,.9);
-      display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px; pointer-events: all;
+      position: absolute; inset: 0; z-index: 9999;
+      background: rgba(4,4,15,.9);
+      display: none; align-items: center; justify-content: center;
+      flex-direction: column; gap: 14px; pointer-events: all;
     }
     #mediaLoadingUI.show { display: flex; }
     .load-ring {
-      width: 46px; height: 46px; border-radius: 50%; border: 3px solid rgba(255,255,255,.12);
-      border-top-color: var(--cyan); animation: spin .85s linear infinite;
+      width: 46px; height: 46px; border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.12);
+      border-top-color: var(--cyan);
+      animation: spin .85s linear infinite;
     }
     .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .file-card { margin-top: 16px; background: var(--glass); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; backdrop-filter: blur(10px); }
-    .file-title { font-family: var(--font-head); font-weight: 600; font-size: 1rem; line-height: 1.4; word-break: break-word; margin-bottom: 6px; }
-    .file-meta { color: var(--muted); font-size: .85rem; }
-    .media-bar { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
-    .media-bar .label { font-size: .8rem; color: var(--muted); font-weight: 600; margin-right: 4px; }
-    .chip { border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text); border-radius: 99px; padding: 8px 14px; font-size: .82rem; font-weight: 500; cursor: pointer; }
-    .chip:hover { border-color: rgba(157,111,255,.45); background: rgba(157,111,255,.12); }
-    .chip.active { border-color: var(--violet); color: #fff; background: linear-gradient(135deg, rgba(124,58,237,.45), rgba(0,245,212,.15)); }
-    #audioPanel { display: none; width: 100%; margin-top: 8px; }
-    #audioPanel.show { display: flex; flex-wrap: wrap; gap: 8px; }
-    .actions { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
-    .btn { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text); text-decoration: none; font-size: .85rem; font-weight: 600; cursor: pointer; }
-    .btn:hover { transform: translateY(-1px); background: rgba(255,255,255,.08); }
-    .btn.primary { background: linear-gradient(135deg, var(--violet2), #a855f7); border-color: transparent; }
-    .btn.mx { background: linear-gradient(135deg, #1a73e8, #3b82f6); border: none; }
-    .btn.vlc { background: linear-gradient(135deg, #e65100, #ff6d00); border: none; }
-    .btn.playit { background: linear-gradient(135deg, #7c3aed, #a855f7); border: none; }
-    .note { margin-top: 16px; padding: 12px 14px; border-left: 3px solid var(--cyan); background: rgba(0,245,212,.06); border-radius: 0 10px 10px 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
-    footer { margin-top: 28px; text-align: center; color: #475569; font-size: .75rem; padding-bottom: 24px; }
+
+    /* ── FILE TITLE STRIP ── */
+    .file-title-strip {
+      margin-top: 14px;
+      background: linear-gradient(135deg, rgba(157,111,255,.08), rgba(0,245,212,.05));
+      border: 1px solid rgba(157,111,255,.25);
+      border-radius: var(--r);
+      padding: 13px 16px;
+      display: flex; align-items: center; gap: 12px;
+      box-shadow: 0 4px 20px rgba(157,111,255,.08);
+    }
+    .file-title-icon { font-size: 1.6rem; flex-shrink: 0; }
+    .file-title-text {
+      font-family: var(--font-head); font-weight: 700; font-size: 1rem;
+      line-height: 1.4; word-break: break-word;
+    }
+    .file-meta {
+      margin-top: 4px; color: var(--muted); font-size: .82rem;
+    }
+
+    /* ── REACTION BAR ── */
+    .reaction-bar {
+      display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap; margin-top: 13px;
+    }
+    .react-btn {
+      display: flex; align-items: center; gap: 6px;
+      padding: 8px 14px; border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--glass);
+      color: var(--text); font-size: .82rem; font-weight: 600;
+      cursor: pointer; transition: all .2s;
+      font-family: var(--font-head);
+    }
+    .react-btn:hover {
+      background: rgba(157,111,255,.12);
+      border-color: rgba(157,111,255,.4);
+    }
+    .react-btn.sub {
+      background: linear-gradient(135deg, rgba(124,58,237,.4), rgba(0,245,212,.15));
+      border-color: rgba(157,111,255,.4);
+    }
+
+    /* ── MEDIA CONTROLS PANEL ── */
+    .media-controls-panel {
+      margin-top: 14px;
+      background: linear-gradient(135deg, rgba(157,111,255,.06), rgba(0,245,212,.03));
+      border: 1px solid rgba(157,111,255,.2);
+      border-radius: var(--r);
+      overflow: hidden;
+    }
+    .mcp-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 11px 16px;
+      background: rgba(157,111,255,.05);
+      border-bottom: 1px solid rgba(157,111,255,.1);
+      flex-wrap: wrap; gap: 8px;
+    }
+    .mcp-title {
+      font-family: var(--font-head); font-size: .8rem; font-weight: 800;
+      letter-spacing: .5px; text-transform: uppercase;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .mcp-title i { color: var(--cyan); }
+    .mcp-tabs { display: flex; gap: 6px; }
+    .mcp-tab {
+      padding: 6px 14px; border-radius: 20px;
+      border: 1px solid rgba(157,111,255,.2);
+      background: transparent;
+      color: var(--muted);
+      font-family: var(--font-head); font-size: .72rem; font-weight: 800;
+      cursor: pointer; transition: all .2s; letter-spacing: .4px;
+      text-transform: uppercase;
+    }
+    .mcp-tab:hover {
+      color: var(--text);
+      border-color: rgba(157,111,255,.4);
+      background: rgba(157,111,255,.08);
+    }
+    .mcp-tab.active {
+      background: rgba(157,111,255,.18);
+      border-color: rgba(157,111,255,.5);
+      color: var(--violet);
+    }
+    .mcp-body { padding: 14px 16px; display: none; }
+    .mcp-body.show { display: block; }
+    .mcp-panel { display: none; }
+    .mcp-panel.active { display: block; }
+
+    .chip {
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.04);
+      color: var(--text);
+      border-radius: 99px;
+      padding: 8px 14px;
+      font-size: .82rem; font-weight: 500;
+      cursor: pointer; transition: all .2s;
+    }
+    .chip:hover {
+      border-color: rgba(157,111,255,.45);
+      background: rgba(157,111,255,.12);
+    }
+    .chip.active {
+      border-color: var(--violet);
+      color: #fff;
+      background: linear-gradient(135deg, rgba(124,58,237,.45), rgba(0,245,212,.15));
+    }
+    #audioPanel {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+
+    /* Subtitle controls */
+    .sub-toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .sub-toggle-label {
+      font-size: .85rem; font-weight: 600;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .toggle-switch {
+      position: relative; width: 44px; height: 24px;
+    }
+    .toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: rgba(255,255,255,.12);
+      border-radius: 24px; transition: .25s;
+    }
+    .toggle-slider:before {
+      content: ""; position: absolute;
+      height: 18px; width: 18px; left: 3px; bottom: 3px;
+      background: #fff; border-radius: 50%; transition: .25s;
+    }
+    input:checked + .toggle-slider {
+      background: var(--violet);
+    }
+    input:checked + .toggle-slider:before {
+      transform: translateX(20px);
+    }
+
+    /* ── SECTION LABEL ── */
+    .section-label {
+      margin: 18px 0 10px;
+      font-family: var(--font-head); font-size: .78rem; font-weight: 800;
+      letter-spacing: .4px; text-transform: uppercase;
+      color: var(--muted);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .section-label i { color: var(--violet); }
+
+    /* ── PLAY WITH + DOWNLOAD ── */
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px;
+    }
+    .btn {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 12px 14px; border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.04);
+      color: var(--text); text-decoration: none;
+      font-size: .85rem; font-weight: 600; cursor: pointer;
+      transition: all .2s; font-family: var(--font-head);
+    }
+    .btn:hover {
+      transform: translateY(-1px);
+      background: rgba(255,255,255,.08);
+    }
+    .btn.primary {
+      background: linear-gradient(135deg, var(--violet2), #a855f7);
+      border-color: transparent;
+    }
+    .btn.mx {
+      background: linear-gradient(135deg, #1a73e8, #3b82f6);
+      border: none;
+    }
+    .btn.vlc {
+      background: linear-gradient(135deg, #e65100, #ff6d00);
+      border: none;
+    }
+    .btn.playit {
+      background: linear-gradient(135deg, #7c3aed, #a855f7);
+      border: none;
+    }
+
+    /* ── NOTE ── */
+    .note {
+      margin-top: 16px;
+      padding: 12px 14px;
+      border-left: 3px solid var(--cyan);
+      background: rgba(0,245,212,.06);
+      border-radius: 0 10px 10px 0;
+      color: var(--muted); font-size: .82rem; line-height: 1.5;
+    }
+
+    /* ── DISCLAIMER ── */
+    .disclaimer {
+      margin-top: 20px;
+      color: #334155; font-size: .78rem; line-height: 1.5;
+      text-align: center;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      margin-top: 28px; text-align: center;
+      color: #475569; font-size: .75rem; padding-bottom: 24px;
+    }
+
+    /* ── PLYR MENU DARK THEME ── */
+    .plyr__menu__container {
+      background: rgba(8,8,26,.96) !important;
+      border: 1px solid rgba(157,111,255,.28) !important;
+      border-radius: 12px !important;
+      box-shadow: 0 12px 32px rgba(0,0,0,.55) !important;
+      color: #f1f5f9 !important;
+      font-family: var(--font-body) !important;
+    }
+    .plyr__menu__container:after {
+      border-top-color: rgba(8,8,26,.96) !important;
+    }
+    .plyr__menu__container .plyr__control--back {
+      color: var(--cyan) !important;
+      background: rgba(0,245,212,.06) !important;
+      border-radius: 8px !important;
+    }
+    .plyr__menu__container .plyr__control--back:after {
+      border-right-color: var(--cyan) !important;
+    }
+    .plyr__menu__container .plyr__control {
+      color: #e2e8f0 !important;
+      border-radius: 8px !important;
+    }
+    .plyr__menu__container .plyr__control:hover {
+      background: rgba(157,111,255,.18) !important;
+      color: #fff !important;
+    }
+    .plyr__menu__container .plyr__control[role="menuitemradio"][aria-checked="true"]:before {
+      background: var(--violet) !important;
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
+
+    <!-- HEADER -->
     <header>
       <a class="brand" href="https://t.me/Deendayal_dhakad">Deendayal Stream</a>
       <span class="live">● LIVE</span>
     </header>
+
+    <!-- PLAYER -->
     <div class="player-box">
       <video id="player" playsinline preload="metadata" controls>
         <source src="{{file_url}}">
@@ -85,25 +362,99 @@
         <div class="load-text" id="mediaLoadingText">Loading…</div>
       </div>
     </div>
-    <div class="file-card">
-      <div class="file-title">{{file_name}}</div>
-      <div class="file-meta">Size: {{file_size}}</div>
+
+    <!-- FILE TITLE STRIP -->
+    <div class="file-title-strip">
+      <div class="file-title-icon">🎬</div>
+      <div>
+        <div class="file-title-text">{{file_name}}</div>
+        <div class="file-meta">Size: {{file_size}}</div>
+      </div>
     </div>
-    <div class="media-bar">
-      <span class="label"><i class="fa-solid fa-sliders"></i> MEDIA</span>
-      <button class="chip" id="btnAudio" type="button"><i class="fa-solid fa-music"></i> Audio</button>
-      <div id="audioPanel"></div>
+
+    <!-- REACTION BAR -->
+    <div class="reaction-bar">
+      <button class="react-btn" type="button">
+        <i class="fa-solid fa-thumbs-up"></i> <span>0</span>
+      </button>
+      <button class="react-btn" type="button">
+        <i class="fa-solid fa-thumbs-down"></i> <span>0</span>
+      </button>
+      <button class="react-btn" type="button" style="color:#f87171">
+        <i class="fa-solid fa-flag"></i> Report
+      </button>
+      <button class="react-btn sub" type="button">
+        <i class="fa-solid fa-bell"></i> Subscribe
+      </button>
     </div>
+
+    <!-- MEDIA CONTROLS (Audio + Subtitles only) -->
+    <div class="media-controls-panel">
+      <div class="mcp-header">
+        <span class="mcp-title"><i class="fa-solid fa-sliders"></i> Media Controls</span>
+        <div class="mcp-tabs">
+          <button class="mcp-tab active" type="button" onclick="switchMCP('audio', this)">🎵 Audio</button>
+          <button class="mcp-tab" type="button" onclick="switchMCP('subtitle', this)">💬 Subtitles</button>
+        </div>
+      </div>
+      <div class="mcp-body show" id="mcpBody">
+        <!-- AUDIO -->
+        <div class="mcp-panel active" id="mcp-audio">
+          <div id="audioPanel">
+            <div style="color:var(--muted);font-size:.82rem;padding:6px 0">
+              Loading audio tracks…
+            </div>
+          </div>
+        </div>
+        <!-- SUBTITLES -->
+        <div class="mcp-panel" id="mcp-subtitle">
+          <div class="sub-toggle-row">
+            <span class="sub-toggle-label">
+              <i class="fa-solid fa-closed-captioning" style="color:var(--violet)"></i>
+              Subtitles
+            </span>
+            <label class="toggle-switch">
+              <input type="checkbox" id="subToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div style="color:var(--muted);font-size:.82rem">
+            No external subtitles available for this file.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PLAY WITH -->
+    <div class="section-label"><i class="fa-solid fa-play-circle"></i> Play With</div>
     <div class="actions">
-      <a class="btn primary" href="{{file_url}}" download><i class="fa-solid fa-download"></i> Download</a>
-      <button class="btn" type="button" onclick="copyLink()"><i class="fa-solid fa-link"></i> Copy Link</button>
-      <a class="btn mx" id="mxLink" href="#"><i class="fa-solid fa-play"></i> MX</a>
+      <a class="btn mx" id="mxLink" href="#"><i class="fa-solid fa-play"></i> MX Player</a>
       <a class="btn vlc" id="vlcLink" href="#"><i class="fa-solid fa-play"></i> VLC</a>
       <a class="btn playit" id="playitLink" href="#"><i class="fa-solid fa-play"></i> PlayIt</a>
     </div>
+
+    <!-- GET FILE -->
+    <div class="section-label"><i class="fa-solid fa-download"></i> Get File</div>
+    <div class="actions">
+      <a class="btn primary" href="{{file_url}}" download>
+        <i class="fa-solid fa-download"></i> Download
+      </a>
+      <button class="btn" type="button" onclick="copyLink()">
+        <i class="fa-solid fa-link"></i> Copy Link
+      </button>
+    </div>
+
+    <!-- NOTE -->
     <div class="note">
       Multi-audio in browser. First switch/seek may take a moment. For best multi-audio use MX or VLC.
     </div>
+
+    <!-- DISCLAIMER -->
+    <div class="disclaimer">
+      This platform provides high-speed streaming and download services. Strictly for personal use.
+    </div>
+
+    <!-- FOOTER -->
     <footer>© Deendayal Stream · For personal use only</footer>
   </div>
 
@@ -111,7 +462,6 @@
   <script>
     const STREAM_URL = "{{file_url}}";
     const SEEK_BUCKET_SECONDS = 10;
-    // Tighter = more corrections. 0.18s is a good balance.
     const MAX_DRIFT = 0.18;
 
     let player = null;
@@ -252,7 +602,6 @@
       if (vid.paused && !activeAudio.paused) activeAudio.pause();
     }
 
-    // VIDEO = master clock. Audio must equal (videoTime - bucketStart).
     function followVideoClock(force) {
       const vid = getVideo();
       if (!vid || !activeAudio || isPreparingAudio) return;
@@ -271,7 +620,6 @@
       const wasPlaying = (forcePlay === true) ? true : !vid.paused;
       if (!vid.paused) vid.pause();
 
-      // Lock movie time at the moment of click/seek
       const targetTime = (atTime != null) ? atTime : (vid.currentTime || 0);
       const bucketStart = roundToBucket(targetTime);
 
@@ -304,7 +652,6 @@
         activeAudio = audioEl;
         syncVolume();
 
-        // Align BOTH to locked target, then start
         try { vid.currentTime = targetTime; } catch (e) {}
         try { activeAudio.currentTime = Math.max(0, targetTime - bucketStart); } catch (e) {}
 
@@ -378,7 +725,6 @@
     function renderAudioPanel(tracks) {
       const panel = document.getElementById('audioPanel');
       if (!panel || !tracks || tracks.length < 2) {
-        document.getElementById('btnAudio').style.display = 'none';
         return;
       }
       panel.innerHTML = '';
@@ -396,15 +742,23 @@
       });
     }
 
-    document.getElementById('btnAudio').addEventListener('click', function () {
-      document.getElementById('audioPanel').classList.toggle('show');
-    });
+    // Media Controls tab switcher
+    function switchMCP(tab, btn) {
+      document.querySelectorAll('.mcp-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.mcp-panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      const panel = document.getElementById('mcp-' + tab);
+      if (panel) panel.classList.add('active');
+      document.getElementById('mcpBody').classList.add('show');
+    }
+
     (function () {
       const intent = 'intent://' + STREAM_URL.replace(/^https?:\/\//, '') + '#Intent;type=video/*;';
       document.getElementById('vlcLink').href = 'vlc://' + STREAM_URL;
       document.getElementById('mxLink').href = intent + 'package=com.mxtech.videoplayer.ad;end';
       document.getElementById('playitLink').href = intent + 'package=com.jio.media.jiobeats;end';
     })();
+
     function copyLink() {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied!'); })
@@ -454,11 +808,10 @@
 
       const vid = getVideo();
       if (vid) {
-        // Master clock: continuously pull audio to video
         vid.addEventListener('timeupdate', function () {
           if (!activeAudio || isPreparingAudio) return;
           const now = performance.now();
-          if (now - lastSyncAt < 250) return; // throttle
+          if (now - lastSyncAt < 250) return;
           lastSyncAt = now;
           followVideoClock(false);
         });
