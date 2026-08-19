@@ -9,142 +9,65 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --cyan: #00f5d4;
-      --violet: #9d6fff;
-      --violet2: #7c3aed;
-      --bg0: #04040f;
-      --glass: rgba(255,255,255,0.05);
-      --border: rgba(255,255,255,0.09);
-      --text: #f1f5f9;
-      --muted: #94a3b8;
-      --r: 16px;
-      --font-head: 'Space Grotesk', sans-serif;
-      --font-body: 'DM Sans', sans-serif;
+      --cyan: #00f5d4; --violet: #9d6fff; --violet2: #7c3aed; --bg0: #04040f;
+      --glass: rgba(255,255,255,0.05); --border: rgba(255,255,255,0.09);
+      --text: #f1f5f9; --muted: #94a3b8; --r: 16px;
+      --font-head: 'Space Grotesk', sans-serif; --font-body: 'DM Sans', sans-serif;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background: var(--bg0);
-      color: var(--text);
-      font-family: var(--font-body);
-      min-height: 100vh;
-    }
+    body { background: var(--bg0); color: var(--text); font-family: var(--font-body); min-height: 100vh; }
     body::before {
-      content: '';
-      position: fixed; inset: 0;
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
       background:
         radial-gradient(ellipse 70% 50% at 15% 5%, rgba(157,111,255,.18) 0%, transparent 55%),
         radial-gradient(ellipse 60% 45% at 85% 90%, rgba(0,245,212,.12) 0%, transparent 55%);
-      pointer-events: none; z-index: 0;
     }
     .wrap { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 16px; }
-    header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 14px 0 18px;
-    }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 14px 0 18px; }
     .brand {
-      font-family: var(--font-head); font-weight: 700; font-size: 1.25rem;
+      font-family: var(--font-head); font-weight: 700; font-size: 1.25rem; text-decoration: none;
       background: linear-gradient(90deg, var(--cyan), var(--violet));
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      text-decoration: none;
     }
-    .live {
-      font-size: 0.75rem; color: var(--cyan);
-      border: 1px solid rgba(0,245,212,.35);
-      padding: 4px 10px; border-radius: 99px;
-    }
+    .live { font-size: 0.75rem; color: var(--cyan); border: 1px solid rgba(0,245,212,.35); padding: 4px 10px; border-radius: 99px; }
     .player-box {
-      position: relative;
-      border-radius: var(--r);
-      overflow: hidden;
-      background: #000;
-      box-shadow: 0 20px 50px rgba(0,0,0,.45);
-      border: 1px solid var(--border);
+      position: relative; border-radius: var(--r); overflow: hidden; background: #000;
+      box-shadow: 0 20px 50px rgba(0,0,0,.45); border: 1px solid var(--border);
     }
     .plyr { --plyr-color-main: var(--violet2); }
     .plyr.controls-locked .plyr__controls,
-    .plyr.controls-locked .plyr__control--overlaid {
-      opacity: 0 !important; visibility: hidden !important; pointer-events: none !important;
-    }
+    .plyr.controls-locked .plyr__control--overlaid { opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
     .seek-blocked .plyr__progress input { pointer-events: none; }
     #mediaLoadingUI {
-      position: absolute; inset: 0; z-index: 9999;
-      background: rgba(4,4,15,.9);
-      display: none; align-items: center; justify-content: center;
-      flex-direction: column; gap: 14px; pointer-events: all;
+      position: absolute; inset: 0; z-index: 9999; background: rgba(4,4,15,.9);
+      display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px; pointer-events: all;
     }
     #mediaLoadingUI.show { display: flex; }
     .load-ring {
-      width: 46px; height: 46px; border-radius: 50%;
-      border: 3px solid rgba(255,255,255,.12);
-      border-top-color: var(--cyan);
-      animation: spin .85s linear infinite;
+      width: 46px; height: 46px; border-radius: 50%; border: 3px solid rgba(255,255,255,.12);
+      border-top-color: var(--cyan); animation: spin .85s linear infinite;
     }
-    .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; letter-spacing: .5px; }
+    .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .file-card {
-      margin-top: 16px;
-      background: var(--glass);
-      border: 1px solid var(--border);
-      border-radius: var(--r);
-      padding: 16px 18px;
-      backdrop-filter: blur(10px);
-    }
-    .file-title {
-      font-family: var(--font-head); font-weight: 600; font-size: 1rem;
-      line-height: 1.4; word-break: break-word; margin-bottom: 6px;
-    }
+    .file-card { margin-top: 16px; background: var(--glass); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; backdrop-filter: blur(10px); }
+    .file-title { font-family: var(--font-head); font-weight: 600; font-size: 1rem; line-height: 1.4; word-break: break-word; margin-bottom: 6px; }
     .file-meta { color: var(--muted); font-size: .85rem; }
-    .media-bar {
-      margin-top: 14px;
-      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
-      background: var(--glass); border: 1px solid var(--border);
-      border-radius: 14px; padding: 12px 14px;
-    }
-    .media-bar .label {
-      font-size: .8rem; color: var(--muted); font-weight: 600;
-      letter-spacing: .4px; margin-right: 4px;
-    }
-    .chip {
-      border: 1px solid var(--border); background: rgba(255,255,255,.04);
-      color: var(--text); border-radius: 99px; padding: 8px 14px;
-      font-size: .82rem; font-weight: 500; cursor: pointer;
-      transition: .15s ease;
-    }
+    .media-bar { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+    .media-bar .label { font-size: .8rem; color: var(--muted); font-weight: 600; margin-right: 4px; }
+    .chip { border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text); border-radius: 99px; padding: 8px 14px; font-size: .82rem; font-weight: 500; cursor: pointer; }
     .chip:hover { border-color: rgba(157,111,255,.45); background: rgba(157,111,255,.12); }
-    .chip.active {
-      border-color: var(--violet); color: #fff;
-      background: linear-gradient(135deg, rgba(124,58,237,.45), rgba(0,245,212,.15));
-    }
+    .chip.active { border-color: var(--violet); color: #fff; background: linear-gradient(135deg, rgba(124,58,237,.45), rgba(0,245,212,.15)); }
     #audioPanel { display: none; width: 100%; margin-top: 8px; }
     #audioPanel.show { display: flex; flex-wrap: wrap; gap: 8px; }
-    .actions {
-      margin-top: 14px; display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;
-    }
-    .btn {
-      display: flex; align-items: center; justify-content: center; gap: 8px;
-      padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
-      background: rgba(255,255,255,.04); color: var(--text);
-      text-decoration: none; font-size: .85rem; font-weight: 600; cursor: pointer;
-      transition: .15s ease;
-    }
+    .actions { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+    .btn { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text); text-decoration: none; font-size: .85rem; font-weight: 600; cursor: pointer; }
     .btn:hover { transform: translateY(-1px); background: rgba(255,255,255,.08); }
-    .btn.primary {
-      background: linear-gradient(135deg, var(--violet2), #a855f7);
-      border-color: transparent;
-    }
+    .btn.primary { background: linear-gradient(135deg, var(--violet2), #a855f7); border-color: transparent; }
     .btn.mx { background: linear-gradient(135deg, #1a73e8, #3b82f6); border: none; }
     .btn.vlc { background: linear-gradient(135deg, #e65100, #ff6d00); border: none; }
     .btn.playit { background: linear-gradient(135deg, #7c3aed, #a855f7); border: none; }
-    .note {
-      margin-top: 16px; padding: 12px 14px;
-      border-left: 3px solid var(--cyan);
-      background: rgba(0,245,212,.06); border-radius: 0 10px 10px 0;
-      color: var(--muted); font-size: .82rem; line-height: 1.5;
-    }
-    footer {
-      margin-top: 28px; text-align: center; color: #475569; font-size: .75rem; padding-bottom: 24px;
-    }
+    .note { margin-top: 16px; padding: 12px 14px; border-left: 3px solid var(--cyan); background: rgba(0,245,212,.06); border-radius: 0 10px 10px 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
+    footer { margin-top: 28px; text-align: center; color: #475569; font-size: .75rem; padding-bottom: 24px; }
   </style>
 </head>
 <body>
@@ -153,7 +76,6 @@
       <a class="brand" href="https://t.me/Deendayal_dhakad">Deendayal Stream</a>
       <span class="live">● LIVE</span>
     </header>
-
     <div class="player-box">
       <video id="player" playsinline preload="metadata" controls>
         <source src="{{file_url}}">
@@ -163,18 +85,15 @@
         <div class="load-text" id="mediaLoadingText">Loading…</div>
       </div>
     </div>
-
     <div class="file-card">
       <div class="file-title">{{file_name}}</div>
       <div class="file-meta">Size: {{file_size}}</div>
     </div>
-
     <div class="media-bar">
       <span class="label"><i class="fa-solid fa-sliders"></i> MEDIA</span>
       <button class="chip" id="btnAudio" type="button"><i class="fa-solid fa-music"></i> Audio</button>
       <div id="audioPanel"></div>
     </div>
-
     <div class="actions">
       <a class="btn primary" href="{{file_url}}" download><i class="fa-solid fa-download"></i> Download</a>
       <button class="btn" type="button" onclick="copyLink()"><i class="fa-solid fa-link"></i> Copy Link</button>
@@ -182,12 +101,9 @@
       <a class="btn vlc" id="vlcLink" href="#"><i class="fa-solid fa-play"></i> VLC</a>
       <a class="btn playit" id="playitLink" href="#"><i class="fa-solid fa-play"></i> PlayIt</a>
     </div>
-
     <div class="note">
-      Multi-audio is supported in browser. First track switch or seek may take a moment
-      while audio is prepared. For best multi-audio use MX Player or VLC.
+      Multi-audio in browser. First switch/seek may take a moment. For best multi-audio use MX or VLC.
     </div>
-
     <footer>© Deendayal Stream · For personal use only</footer>
   </div>
 
@@ -195,8 +111,8 @@
   <script>
     const STREAM_URL = "{{file_url}}";
     const SEEK_BUCKET_SECONDS = 10;
-    const MAX_DRIFT_SECONDS = 0.35;
-    const DRIFT_CHECK_INTERVAL_MS = 1000;
+    // Tighter = more corrections. 0.18s is a good balance.
+    const MAX_DRIFT = 0.18;
 
     let player = null;
     let activeAudio = null;
@@ -205,7 +121,6 @@
     let isPreparingAudio = false;
     let wantPlayWhenReady = false;
     let prepareWatch = null;
-    let driftWatch = null;
     let buffering = false;
     let audioCtx = null;
     let vidGainNode = null;
@@ -213,6 +128,7 @@
     let audioRequestId = 0;
     let seekDebounceTimer = null;
     let wasPlayingBeforeSeek = false;
+    let lastSyncAt = 0;
 
     function roundToBucket(t) {
       return Math.round(t / SEEK_BUCKET_SECONDS) * SEEK_BUCKET_SECONDS;
@@ -230,7 +146,6 @@
       u.pathname = '/api/tracks/' + pathParts.join('/');
       return u.toString();
     }
-
     const LANG_MAP = {
       eng:'English', en:'English', hin:'Hindi', hi:'Hindi',
       tam:'Tamil', ta:'Tamil', tel:'Telugu', te:'Telugu',
@@ -282,10 +197,9 @@
       if (on) {
         forcePauseIfPreparing();
         if (prepareWatch) clearInterval(prepareWatch);
-        prepareWatch = setInterval(forcePauseIfPreparing, 100);
+        prepareWatch = setInterval(forcePauseIfPreparing, 80);
       } else if (prepareWatch) {
-        clearInterval(prepareWatch);
-        prepareWatch = null;
+        clearInterval(prepareWatch); prepareWatch = null;
       }
       updateLoadingUI();
     }
@@ -337,47 +251,43 @@
       if (!vid.paused && activeAudio.paused) activeAudio.play().catch(function () {});
       if (vid.paused && !activeAudio.paused) activeAudio.pause();
     }
-    function expectedAudioTime(vid) {
-      return Math.max(0, (vid.currentTime || 0) - activeBucketStart);
-    }
-    function startDriftWatch() {
-      stopDriftWatch();
-      driftWatch = setInterval(function () {
-        const vid = getVideo();
-        if (!vid || !activeAudio || isPreparingAudio) return;
-        if (vid.paused || activeAudio.paused) return;
-        const expected = expectedAudioTime(vid);
-        if (Math.abs(activeAudio.currentTime - expected) > MAX_DRIFT_SECONDS) {
-          try { activeAudio.currentTime = expected; } catch (e) {}
-        }
-      }, DRIFT_CHECK_INTERVAL_MS);
-    }
-    function stopDriftWatch() {
-      if (driftWatch) { clearInterval(driftWatch); driftWatch = null; }
+
+    // VIDEO = master clock. Audio must equal (videoTime - bucketStart).
+    function followVideoClock(force) {
+      const vid = getVideo();
+      if (!vid || !activeAudio || isPreparingAudio) return;
+      if (vid.paused && !force) return;
+      const expected = Math.max(0, (vid.currentTime || 0) - activeBucketStart);
+      const drift = Math.abs((activeAudio.currentTime || 0) - expected);
+      if (force || drift > MAX_DRIFT) {
+        try { activeAudio.currentTime = expected; } catch (e) {}
+      }
     }
 
-    // forcePlay = true → always resume after prepare (used after seek)
     function requestAudio(streamIndex, atTime, forcePlay) {
       const vid = getVideo();
       if (!vid) return;
 
-      const wasPlayingBeforePause = (forcePlay === true) ? true : !vid.paused;
+      const wasPlaying = (forcePlay === true) ? true : !vid.paused;
       if (!vid.paused) vid.pause();
 
-      const requestedTime = (atTime != null) ? atTime : (vid.currentTime || 0);
-      const bucketStart = roundToBucket(requestedTime);
+      // Lock movie time at the moment of click/seek
+      const targetTime = (atTime != null) ? atTime : (vid.currentTime || 0);
+      const bucketStart = roundToBucket(targetTime);
 
       initAudioContext(vid);
-      const myRequestId = ++audioRequestId;
+      const myId = ++audioRequestId;
 
       if (activeAudio) { try { activeAudio.pause(); } catch (e) {} }
       destroyAudio();
-      stopDriftWatch();
+
       activeTrackIdx = streamIndex;
       activeBucketStart = bucketStart;
       silenceVideo(vid);
       setPreparing(true);
-      wantPlayWhenReady = wasPlayingBeforePause;
+      wantPlayWhenReady = wasPlaying;
+
+      try { vid.currentTime = targetTime; } catch (e) {}
 
       const audioEl = document.createElement('audio');
       audioEl.preload = 'auto';
@@ -387,39 +297,42 @@
 
       audioEl.addEventListener('canplay', function onCanPlay() {
         audioEl.removeEventListener('canplay', onCanPlay);
-        if (myRequestId !== audioRequestId) {
+        if (myId !== audioRequestId) {
           try { audioEl.pause(); audioEl.remove(); } catch (e) {}
           return;
         }
         activeAudio = audioEl;
         syncVolume();
 
-        // Match audio to CURRENT video time
-        const now = vid.currentTime || requestedTime;
-        const offset = Math.max(0, now - bucketStart);
-        try { activeAudio.currentTime = offset; } catch (e) {}
+        // Align BOTH to locked target, then start
+        try { vid.currentTime = targetTime; } catch (e) {}
+        try { activeAudio.currentTime = Math.max(0, targetTime - bucketStart); } catch (e) {}
 
         setPreparing(false);
 
-        if (wantPlayWhenReady) {
-          wantPlayWhenReady = false;
-          Promise.resolve()
-            .then(function () { return activeAudio.play(); })
+        function go() {
+          try { vid.currentTime = targetTime; } catch (e) {}
+          try { activeAudio.currentTime = Math.max(0, targetTime - bucketStart); } catch (e) {}
+          return activeAudio.play()
             .then(function () { return vid.play(); })
             .then(function () {
-              try {
-                const n = vid.currentTime || 0;
-                activeAudio.currentTime = Math.max(0, n - bucketStart);
-              } catch (e) {}
+              followVideoClock(true);
+              setTimeout(function () { followVideoClock(true); }, 150);
+              setTimeout(function () { followVideoClock(true); }, 400);
+              setTimeout(function () { followVideoClock(true); }, 900);
             })
             .catch(function () {});
         }
-        startDriftWatch();
+
+        if (wantPlayWhenReady) {
+          wantPlayWhenReady = false;
+          go();
+        }
         markActiveChip(streamIndex);
       });
 
       audioEl.addEventListener('error', function () {
-        if (myRequestId !== audioRequestId) return;
+        if (myId !== audioRequestId) return;
         setPreparing(false);
         wantPlayWhenReady = false;
         switchToDefault();
@@ -428,14 +341,11 @@
       audioEl.load();
     }
 
-    // Only on seeked (once). Remember if it was playing → auto-resume.
     function onSeekWhileActive() {
       if (activeTrackIdx === null) return;
       const vid = getVideo();
       if (!vid) return;
-
       if (!vid.paused) wasPlayingBeforeSeek = true;
-
       if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
       seekDebounceTimer = setTimeout(function () {
         const v = getVideo();
@@ -443,7 +353,7 @@
         const resume = wasPlayingBeforeSeek || !v.paused;
         wasPlayingBeforeSeek = false;
         requestAudio(activeTrackIdx, v.currentTime, resume);
-      }, 450);
+      }, 400);
     }
 
     function switchToDefault() {
@@ -452,7 +362,6 @@
       audioRequestId++;
       setPreparing(false);
       wantPlayWhenReady = false;
-      stopDriftWatch();
       destroyAudio();
       activeTrackIdx = null;
       activeBucketStart = 0;
@@ -463,13 +372,9 @@
 
     function markActiveChip(streamIndex) {
       document.querySelectorAll('#audioPanel .chip').forEach(function (el) {
-        el.classList.toggle(
-          'active',
-          String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex)
-        );
+        el.classList.toggle('active', String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex));
       });
     }
-
     function renderAudioPanel(tracks) {
       const panel = document.getElementById('audioPanel');
       if (!panel || !tracks || tracks.length < 2) {
@@ -494,14 +399,12 @@
     document.getElementById('btnAudio').addEventListener('click', function () {
       document.getElementById('audioPanel').classList.toggle('show');
     });
-
     (function () {
       const intent = 'intent://' + STREAM_URL.replace(/^https?:\/\//, '') + '#Intent;type=video/*;';
       document.getElementById('vlcLink').href = 'vlc://' + STREAM_URL;
       document.getElementById('mxLink').href = intent + 'package=com.mxtech.videoplayer.ad;end';
       document.getElementById('playitLink').href = intent + 'package=com.jio.media.jiobeats;end';
     })();
-
     function copyLink() {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied!'); })
@@ -511,14 +414,12 @@
 
     document.addEventListener('DOMContentLoaded', function () {
       showLoadingUI(true, 'Loading…');
-
       player = new Plyr('#player', {
         controls: ['play-large','rewind','play','fast-forward','progress','current-time','duration','mute','volume','settings','fullscreen'],
         settings: ['speed'],
         speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
         seekTime: 10
       });
-
       player.on('volumechange', syncVolume);
       player.on('play', function () {
         if (isPreparingAudio) {
@@ -530,18 +431,17 @@
           return;
         }
         ensureAudioPlaying();
+        followVideoClock(true);
       });
       player.on('pause', function () {
         if (activeAudio && !activeAudio.paused) activeAudio.pause();
       });
-      // IMPORTANT: only seeked — not seeking (avoids double call / no autoplay)
 
       document.addEventListener('keydown', function (e) {
         if (!isPreparingAudio) return;
         const key = e.key.toLowerCase();
         if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') {
-          e.preventDefault();
-          e.stopPropagation();
+          e.preventDefault(); e.stopPropagation();
         }
       }, true);
 
@@ -554,35 +454,40 @@
 
       const vid = getVideo();
       if (vid) {
-        ['loadstart', 'waiting', 'stalled'].forEach(function (ev) {
+        // Master clock: continuously pull audio to video
+        vid.addEventListener('timeupdate', function () {
+          if (!activeAudio || isPreparingAudio) return;
+          const now = performance.now();
+          if (now - lastSyncAt < 250) return; // throttle
+          lastSyncAt = now;
+          followVideoClock(false);
+        });
+
+        ['loadstart','waiting','stalled'].forEach(function (ev) {
           vid.addEventListener(ev, function () {
-            buffering = true;
-            updateLoadingUI();
+            buffering = true; updateLoadingUI();
             if (activeAudio && !activeAudio.paused) activeAudio.pause();
           });
         });
-        ['canplay', 'playing', 'loadeddata'].forEach(function (ev) {
+        ['canplay','playing','loadeddata'].forEach(function (ev) {
           vid.addEventListener(ev, function () {
-            buffering = false;
-            updateLoadingUI();
+            buffering = false; updateLoadingUI();
             if (activeAudio && !isPreparingAudio && !vid.paused) {
-              try { activeAudio.currentTime = expectedAudioTime(vid); } catch (e) {}
+              followVideoClock(true);
               if (activeAudio.paused) activeAudio.play().catch(function () {});
             }
           });
         });
         vid.addEventListener('play', function () {
           if (isPreparingAudio) {
-            vid.pause();
-            wantPlayWhenReady = true;
-            return;
+            vid.pause(); wantPlayWhenReady = true; return;
           }
           ensureAudioPlaying();
+          followVideoClock(true);
         });
         vid.addEventListener('pause', function () {
           if (activeAudio && !activeAudio.paused) activeAudio.pause();
         });
-        // Only one seek handler
         vid.addEventListener('seeked', onSeekWhileActive);
       }
     });
