@@ -97,10 +97,7 @@ async def mux_av_stream(
     stream_index: int,
     start_time: float = 0.0,
 ):
-    """
-    Single stream: video + selected audio.
-    Fragmented MP4 to stdout so the browser can start before mux finishes.
-    """
+    """Video + selected audio as one fragmented MP4 stream (play while muxing)."""
     await _get_file_id(msg_id, secure_hash)
 
     entry = _meta(msg_id)
@@ -125,6 +122,7 @@ async def mux_av_stream(
         "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2",
         "-timeout", "30000000",
     ]
+    # -ss BEFORE -i for fast input seek
     if start_time > 0:
         cmd += ["-ss", str(start_time)]
 
@@ -141,7 +139,7 @@ async def mux_av_stream(
 
     cmd += [
         "-f", "mp4",
-        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "-movflags", "frag_keyframe+empty_moov+default_base_moof+frag_every_frame",
         "pipe:1",
     ]
 
@@ -218,5 +216,5 @@ async def start_cache_cleanup_loop(interval_seconds: int = 3600):
         try:
             await cleanup_audio_cache()
         except Exception as e:
-            logging.error(f"[AudioTracks] cleanup loop error: {e}")
+            logging.error(f"[AudioTracks] cleanup error: {e}")
         await asyncio.sleep(interval_seconds)
