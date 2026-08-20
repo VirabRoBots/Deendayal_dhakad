@@ -1,9 +1,16 @@
-import os
+# Deendayal_botz/util/audio_tracks.py
+#
+# Fast, cancellable audio-track muxing for the Deendayal stream player.
+#
+# Key ideas:
+#   * /api/tracks  -> audio stream list + real container duration (cached)
+#   * /mux/<i>/... -> fragmented MP4 (video copy + chosen audio) starting at ?t=
+#   * the browser switching source drops the socket; we detect that and kill
+#     ffmpeg immediately so bandwidth goes to the new segment, not the old one.
+
 import json
 import asyncio
 import logging
-import time
-from pathlib import Path
 
 from aiohttp import web
 
@@ -13,25 +20,32 @@ from Deendayal_botz.util.file_properties import get_file_ids
 from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 
 LOCAL_PORT = int(PORT)
-TEMP_DIR = Path("/tmp/audio_cache")
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
-_file_cache = {}
-CACHE_MAX_AGE_SECONDS = 12 * 60 * 60
-CACHE_MIN_FREE_BYTES = 1 * 1024 ** 3
-COPYABLE_AUDIO = {"aac", "mp4a"}
+# Audio codecs that browsers can play inside MP4 without re-encoding.
+COPYABLE_AUDIO = {"aac", "mp4a", "mp4a.40.2"}
 
-# How long to wait, at most, for new bytes to appear in a growing file before
-# giving up and telling the client there's nothing more right now.
-GROW_WAIT_TIMEOUT = 20.0
-GROW_POLL_INTERVAL = 0.2
-# How many bytes of "safety margin" behind the writer we insist exist before
-# serving them (avoids serving a half-written moof/frame boundary).
-GROW_SAFETY_MARGIN = 32 * 1024
+# Cap simultaneous ffmpeg jobs so rapid seeking can't spawn a dozen transcodes.
+MAX_CONCURRENT_MUX = 4
+_mux_semaphore = asyncio.Semaphore(MAX_CONCURRENT_MUX)
+
+# In-memory metadata cache: msg_id -> {"tracks": [...] | None, "duration": float}
+_file_cache: dict = {}
+CACHE_MAX_ENTRIES = 500
+
+# How long ffprobe may spend opening the remote stream.
+PROBE_TIMEOUT_SECONDS = 40
 
 
 def _meta(msg_id: int) -> dict:
-    return _file_cache.setdefault(msg_id, {"tracks": None})
+    entry = _file_cache.get(msg_id)
+    if entry is None:
+        # Cheap bound so the cache can't grow forever on a long-running bot.
+        if len(_file_cache) >= CACHE_MAX_ENTRIES:
+            for key in list(_file_cache.keys())[: CACHE_MAX_ENTRIES // 4]:
+                _file_cache.pop(key, None)
+        entry = {"tracks": None, "duration": 0.0}
+        _file_cache[msg_id] = entry
+    return entry
 
 
 async def _get_file_id(msg_id: int, secure_hash: str):
@@ -49,135 +63,116 @@ def _internal_stream_url(msg_id: int, secure_hash: str) -> str:
 
 def _codec_for_stream(msg_id: int, stream_index: int) -> str:
     tracks = _meta(msg_id).get("tracks") or []
-    for t in tracks:
-        if t.get("index") == stream_index:
-            return (t.get("codec_name") or "").lower()
+    for track in tracks:
+        if track.get("index") == stream_index:
+            return (track.get("codec_name") or "").lower()
     return ""
 
 
-async def get_tracks(msg_id: int, secure_hash: str) -> list:
-    entry = _meta(msg_id)
-    if entry["tracks"] is not None:
-        return entry["tracks"]
-
-    await _get_file_id(msg_id, secure_hash)
+async def _probe(msg_id: int, secure_hash: str) -> dict:
+    """Run ffprobe once for audio streams + container duration."""
     internal_url = _internal_stream_url(msg_id, secure_hash)
 
     process = await asyncio.create_subprocess_exec(
-        "ffprobe", "-v", "quiet", "-print_format", "json",
-        "-show_streams", "-select_streams", "a",
-        "-timeout", "15000000",
+        "ffprobe",
+        "-v", "quiet",
+        "-print_format", "json",
+        "-show_streams",
+        "-show_format",
+        "-select_streams", "a",
+        "-rw_timeout", "20000000",
         "-i", internal_url,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await process.communicate()
+
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(), timeout=PROBE_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        try:
+            process.kill()
+        except Exception:
+            pass
+        logging.warning(f"[AudioTracks] ffprobe timed out for msg={msg_id}")
+        return {"tracks": [], "duration": 0.0}
 
     tracks = []
+    duration = 0.0
     try:
-        data = json.loads(stdout)
+        data = json.loads(stdout or b"{}")
+
         for i, stream in enumerate(data.get("streams", [])):
             tags = stream.get("tags", {}) or {}
-            tracks.append({
-                "index": stream.get("index", i),
-                "codec_name": stream.get("codec_name", "unknown"),
-                "tags": {
-                    "language": tags.get("language", tags.get("LANGUAGE", "")),
-                    "title": tags.get("title", tags.get("TITLE", "")),
-                    "handler_name": tags.get("handler_name", ""),
-                },
-            })
+            tracks.append(
+                {
+                    "index": stream.get("index", i),
+                    "codec_name": stream.get("codec_name", "unknown"),
+                    "tags": {
+                        "language": tags.get("language", tags.get("LANGUAGE", "")),
+                        "title": tags.get("title", tags.get("TITLE", "")),
+                        "handler_name": tags.get("handler_name", ""),
+                    },
+                }
+            )
+
+        raw_duration = (data.get("format") or {}).get("duration")
+        if raw_duration:
+            try:
+                duration = max(0.0, float(raw_duration))
+            except (TypeError, ValueError):
+                duration = 0.0
     except Exception as e:
-        logging.error(f"[AudioTracks] ffprobe parse failed: {e} | stderr={stderr[:300]!r}")
-        tracks = []
+        logging.error(
+            f"[AudioTracks] ffprobe parse failed: {e} | stderr={stderr[:300]!r}"
+        )
+        return {"tracks": [], "duration": 0.0}
 
-    entry["tracks"] = tracks
-    return tracks
-
-
-# ---------------------------------------------------------------------------
-# Build-session tracking
-# ---------------------------------------------------------------------------
-# One "session" = one ffmpeg process currently writing (or having written) a
-# file for a given (msg_id, stream_index, start_time). Kept in memory so
-# concurrent requests for the same in-progress build can share it instead of
-# spawning duplicate ffmpeg processes.
-
-_sessions = {}  # key -> BuildSession
-_sessions_lock = asyncio.Lock()
+    return {"tracks": tracks, "duration": duration}
 
 
-class BuildSession:
-    def __init__(self, msg_id, stream_index, start_time, path, is_full_build):
-        self.msg_id = msg_id
-        self.stream_index = stream_index
-        self.start_time = start_time
-        self.path = path
-        self.is_full_build = is_full_build  # True only if start_time == 0
-        self.process = None
-        self.done = False
-        self.failed = False
-        self.written_bytes = 0
-        self.lock = asyncio.Lock()
+async def get_track_info(msg_id: int, secure_hash: str) -> dict:
+    """Return {"tracks": [...], "duration": seconds}. Only caches useful results."""
+    entry = _meta(msg_id)
+    if entry["tracks"]:
+        return {"tracks": entry["tracks"], "duration": entry.get("duration", 0.0)}
 
-    def key(self):
-        return (self.msg_id, self.stream_index, self.start_time)
+    await _get_file_id(msg_id, secure_hash)
+    probed = await _probe(msg_id, secure_hash)
 
+    # A failed probe must NOT be cached, otherwise one transient error hides the
+    # language chips for this file forever.
+    if probed["tracks"]:
+        entry["tracks"] = probed["tracks"]
+        entry["duration"] = probed["duration"]
 
-def _cache_key(msg_id: int, stream_index: int) -> str:
-    return f"{msg_id}_{stream_index}.mp4"
+    return probed
 
 
-def _cache_path(msg_id: int, stream_index: int) -> Path:
-    return TEMP_DIR / _cache_key(msg_id, stream_index)
+async def get_tracks(msg_id: int, secure_hash: str) -> list:
+    """Backwards-compatible helper: audio stream list only."""
+    info = await get_track_info(msg_id, secure_hash)
+    return info.get("tracks", [])
 
 
-def _ephemeral_path(msg_id: int, stream_index: int, start_time: float) -> Path:
-    return TEMP_DIR / f"{msg_id}_{stream_index}_{int(start_time)}.part.mp4"
-
-
-async def _start_build(msg_id, secure_hash, stream_index, start_time) -> "BuildSession":
-    """Kick off ffmpeg writing to a file. Returns the BuildSession (already
-    registered) whether newly created or reused from a concurrent request."""
-    is_full_build = start_time <= 0.01
-    target_path = _cache_path(msg_id, stream_index) if is_full_build else _ephemeral_path(
-        msg_id, stream_index, start_time
-    )
-
-    session_key = (msg_id, stream_index, round(start_time, 1))
-
-    async with _sessions_lock:
-        existing = _sessions.get(session_key)
-        if existing is not None and not existing.failed:
-            return existing
-
-        session = BuildSession(msg_id, stream_index, start_time, target_path, is_full_build)
-        _sessions[session_key] = session
-
-    codec = _codec_for_stream(msg_id, stream_index)
-    use_copy = codec in COPYABLE_AUDIO
-    internal_url = _internal_stream_url(msg_id, secure_hash)
-
-    logging.info(
-        f"[Mux] BUILD msg={msg_id} track={stream_index} start={start_time}s "
-        f"full={is_full_build} mode={'copy' if use_copy else 'encode'} -> {target_path}"
-    )
-
-    if target_path.exists():
-        try:
-            target_path.unlink()
-        except FileNotFoundError:
-            pass
-
+def _build_mux_cmd(internal_url: str, stream_index: int, start_time: float, use_copy: bool):
     cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-nostdin",
         "-seekable", "1",
-        "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2",
-        "-timeout", "30000000",
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "2",
+        "-rw_timeout", "30000000",
     ]
+
+    # -ss BEFORE -i => fast input seek, ffmpeg only range-fetches from there.
     if start_time > 0:
-        cmd += ["-ss", str(start_time)]
+        cmd += ["-ss", f"{start_time:.3f}"]
 
     cmd += [
         "-i", internal_url,
@@ -185,238 +180,124 @@ async def _start_build(msg_id, secure_hash, stream_index, start_time) -> "BuildS
         "-map", f"0:{stream_index}",
         "-c:v", "copy",
     ]
+
     if use_copy:
         cmd += ["-c:a", "copy"]
     else:
-        cmd += ["-c:a", "aac", "-b:a", "96k", "-ac", "2"]
+        cmd += ["-c:a", "aac", "-b:a", "128k", "-ac", "2"]
 
     cmd += [
+        "-avoid_negative_ts", "make_zero",
+        "-fflags", "+nobuffer+genpts",
+        "-flush_packets", "1",
+        "-max_delay", "0",
         "-f", "mp4",
+        # frag_every_frame removed on purpose: one fragment per frame is huge
+        # overhead and delays the first playable bytes.
         "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-        str(target_path),
+        "pipe:1",
     ]
-
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    session.process = proc
-
-    asyncio.create_task(_watch_build(session))
-    return session
+    return cmd
 
 
-async def _watch_build(session: "BuildSession"):
-    """Waits for ffmpeg to exit, updates session state, cleans up on failure."""
-    try:
-        _, err = await session.process.communicate()
-        rc = session.process.returncode
-        if rc not in (0, None):
-            session.failed = True
-            logging.error(f"[Mux] build failed rc={rc} err={err[:300]!r} path={session.path}")
-            try:
-                if session.path.exists():
-                    session.path.unlink()
-            except FileNotFoundError:
-                pass
-        else:
-            session.done = True
-            logging.info(f"[Mux] build complete: {session.path}")
-    except Exception as e:
-        session.failed = True
-        logging.error(f"[Mux] build watcher error: {e}")
-    finally:
-        async with _sessions_lock:
-            key = session.key()
-            # Only drop from the in-progress registry; the file itself
-            # (if it's a completed full build) stays on disk as the cache.
-            if _sessions.get((session.msg_id, session.stream_index, round(session.start_time, 1))) is session:
-                del _sessions[(session.msg_id, session.stream_index, round(session.start_time, 1))]
-
-
-def cached_full_file_exists(msg_id: int, stream_index: int) -> Path | None:
-    p = _cache_path(msg_id, stream_index)
-    return p if p.exists() else None
-
-
-async def _wait_for_bytes(path: Path, needed: int, session: "BuildSession" = None) -> int:
-    """Poll file size until it has at least `needed` bytes, the build finished,
-    the build failed, or we time out. Returns the current file size."""
-    waited = 0.0
-    while True:
-        try:
-            size = path.stat().st_size
-        except FileNotFoundError:
-            size = 0
-
-        if size >= needed:
-            return size
-        if session is not None and (session.done or session.failed):
-            return size
-        if waited >= GROW_WAIT_TIMEOUT:
-            return size
-
-        await asyncio.sleep(GROW_POLL_INTERVAL)
-        waited += GROW_POLL_INTERVAL
-
-
-async def serve_track(request: web.Request, msg_id: int, secure_hash: str,
-                       stream_index: int, start_time: float = 0.0) -> web.StreamResponse:
-    """Main entry point used by the /mux route. Decides whether to serve an
-    already-cached complete file (with Range support, fully seekable) or to
-    start/reuse a build and stream from the growing file."""
+async def mux_av_stream(
+    request: web.Request,
+    msg_id: int,
+    secure_hash: str,
+    stream_index: int,
+    start_time: float = 0.0,
+):
+    """Video + selected audio as one fragmented MP4 stream (play while muxing)."""
     await _get_file_id(msg_id, secure_hash)
 
     entry = _meta(msg_id)
-    if entry.get("tracks") is None:
+    if not entry.get("tracks"):
         try:
-            await get_tracks(msg_id, secure_hash)
+            await get_track_info(msg_id, secure_hash)
         except Exception as e:
-            logging.warning(f"[Mux] get_tracks failed: {e}")
+            logging.warning(f"[Mux] track probe failed: {e}")
 
-    # 1) Fully-built cache already exists for this language -> serve it like
-    #    a normal seekable file (same behavior as the default track).
-    cached = cached_full_file_exists(msg_id, stream_index)
-    if cached is not None:
-        return await _serve_complete_file(request, cached)
+    codec = _codec_for_stream(msg_id, stream_index)
+    use_copy = codec in COPYABLE_AUDIO
+    internal_url = _internal_stream_url(msg_id, secure_hash)
 
-    # 2) Otherwise start (or join) a build and stream from the growing file.
-    session = await _start_build(msg_id, secure_hash, stream_index, start_time)
+    logging.info(
+        f"[Mux] msg={msg_id} audio={stream_index} codec={codec or '?'} "
+        f"mode={'copy' if use_copy else 'encode'} start={start_time:.2f}s"
+    )
 
-    return await _serve_growing_file(request, session)
-
-
-async def _serve_complete_file(request: web.Request, path: Path) -> web.Response:
-    file_size = path.stat().st_size
-    range_header = request.headers.get("Range", 0)
-
-    if range_header:
-        from_bytes, until_bytes = range_header.replace("bytes=", "").split("-")
-        from_bytes = int(from_bytes)
-        until_bytes = int(until_bytes) if until_bytes else file_size - 1
-    else:
-        from_bytes = 0
-        until_bytes = file_size - 1
-
-    until_bytes = min(until_bytes, file_size - 1)
-    if from_bytes < 0 or until_bytes < from_bytes:
-        return web.Response(
-            status=416,
-            body="416: Range not satisfiable",
-            headers={"Content-Range": f"bytes */{file_size}"},
+    async with _mux_semaphore:
+        proc = await asyncio.create_subprocess_exec(
+            *_build_mux_cmd(internal_url, stream_index, start_time, use_copy),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            limit=1024 * 1024,
         )
 
-    length = until_bytes - from_bytes + 1
+        resp = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "video/mp4",
+                "Cache-Control": "no-store",
+                "Accept-Ranges": "none",
+                # Hint to any proxy in front: do not buffer, we want first bytes out.
+                "X-Accel-Buffering": "no",
+                "X-Segment-Start": f"{start_time:.3f}",
+            },
+        )
 
-    async def _reader():
-        with open(path, "rb") as f:
-            f.seek(from_bytes)
-            remaining = length
-            chunk = 1024 * 1024
-            while remaining > 0:
-                data = f.read(min(chunk, remaining))
-                if not data:
-                    break
-                remaining -= len(data)
-                yield data
+        try:
+            await resp.prepare(request)
 
-    return web.Response(
-        status=206 if range_header else 200,
-        body=_reader(),
-        headers={
-            "Content-Type": "video/mp4",
-            "Content-Range": f"bytes {from_bytes}-{until_bytes}/{file_size}",
-            "Content-Length": str(length),
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "no-store",
-        },
-    )
-
-
-async def _serve_growing_file(request: web.Request, session: "BuildSession") -> web.StreamResponse:
-    """Streams a file that ffmpeg is actively writing. No hard Content-Length
-    (we don't know the final size yet) -- served as a plain chunked stream,
-    similar in spirit to the old live-pipe behavior, but reading from disk so
-    a second concurrent viewer of the same session doesn't need a second
-    ffmpeg process."""
-    resp = web.StreamResponse(
-        status=200,
-        headers={
-            "Content-Type": "video/mp4",
-            "Cache-Control": "no-store",
-            "Accept-Ranges": "none",
-        },
-    )
-    await resp.prepare(request)
-
-    sent = 0
-    try:
-        with open(session.path, "rb") as f:
             while True:
-                target = sent + (256 * 1024)
-                available = await _wait_for_bytes(session.path, target, session)
-                readable_to = max(0, available - GROW_SAFETY_MARGIN) if not session.done else available
-
-                if readable_to <= sent:
-                    if session.done or session.failed:
-                        break
-                    # Timed out waiting for more data; end this response,
-                    # client (Plyr) will treat it like the mux ended.
+                chunk = await proc.stdout.read(32 * 1024)
+                if not chunk:
                     break
-
-                f.seek(sent)
-                data = f.read(readable_to - sent)
-                if not data:
+                await resp.write(chunk)
+                # Client vanished (source switch / seek) -> stop immediately.
+                if request.transport is None or request.transport.is_closing():
                     break
-                await resp.write(data)
-                sent += len(data)
-    except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
-        pass
-    except Exception as e:
-        logging.exception(f"[Mux] serve_growing_file error: {e}")
+        except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
+            # Normal when the player switches track or seeks.
+            pass
+        except Exception as e:
+            logging.warning(f"[Mux] stream aborted: {e}")
+        finally:
+            await _terminate(proc)
 
     return resp
 
 
-def _dir_free_bytes(path: Path) -> int:
-    stat = os.statvfs(path)
-    return stat.f_bavail * stat.f_frsize
+async def _terminate(proc) -> None:
+    """Kill ffmpeg right away and drain its stderr without blocking."""
+    if proc.returncode is None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        _, err = await asyncio.wait_for(proc.communicate(), timeout=5)
+        if proc.returncode not in (0, None, -9, 255):
+            logging.error(f"[Mux] ffmpeg exit={proc.returncode} err={err[:300]!r}")
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------
+# Compatibility shims.
+#
+# The old implementation kept a /tmp/audio_cache directory and an hourly
+# cleanup loop, but nothing ever wrote files into it (muxing is fully
+# streamed through a pipe). These remain as harmless no-ops so existing
+# imports / startup tasks keep working.
+# --------------------------------------------------------------------------
 
 
 async def cleanup_audio_cache():
-    now = time.time()
-    files = sorted(TEMP_DIR.glob("*"), key=lambda p: p.stat().st_mtime if p.exists() else 0)
-    for f in list(files):
-        try:
-            if f.exists() and now - f.stat().st_mtime > CACHE_MAX_AGE_SECONDS:
-                f.unlink()
-        except FileNotFoundError:
-            pass
-    # Also always clear ephemeral (.part.mp4) files older than 1 hour --
-    # they were never meant to be kept long-term.
-    for f in TEMP_DIR.glob("*.part.mp4"):
-        try:
-            if f.exists() and now - f.stat().st_mtime > 3600:
-                f.unlink()
-        except FileNotFoundError:
-            pass
-
-    files = sorted(TEMP_DIR.glob("*"), key=lambda p: p.stat().st_mtime if p.exists() else 0)
-    while files and _dir_free_bytes(TEMP_DIR) < CACHE_MIN_FREE_BYTES:
-        oldest = files.pop(0)
-        try:
-            if oldest.exists():
-                oldest.unlink()
-        except FileNotFoundError:
-            pass
+    return None
 
 
 async def start_cache_cleanup_loop(interval_seconds: int = 3600):
     while True:
-        try:
-            await cleanup_audio_cache()
-        except Exception as e:
-            logging.error(f"[AudioTracks] cleanup error: {e}")
         await asyncio.sleep(interval_seconds)
