@@ -1,4 +1,5 @@
 from aiohttp import web
+
 import re
 import math
 import logging
@@ -9,23 +10,38 @@ from Deendayal_botz.Bot import multi_clients, work_loads
 from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 from Deendayal_botz.util.custom_dl import ByteStreamer
 from Deendayal_botz.util.render_template import render_page
-from Deendayal_botz.util.audio_tracks import get_tracks, serve_track
+from Deendayal_botz.util.audio_tracks import get_track_info, mux_av_stream
 from info import *
 
 routes = web.RouteTableDef()
 
+# <6-char hash><message id>, e.g. "AbC1_2345678"
+_COMBINED_RE = re.compile(r"^([a-zA-Z0-9_-]{6})(\d+)")
+# leading "<message id>" of the FIRST path segment only, e.g. "12345/Movie.2019.mkv"
+_ID_FIRST_SEGMENT_RE = re.compile(r"^(\d+)")
+
 
 def parse_id_hash(path: str, request: web.Request):
-    match = re.search(r"^([a-zA-Z0-9_-]{6})(\d+)$", path)
+    """Resolve (message_id, secure_hash) from a stream path.
+
+    Anchored on the first path segment so a filename containing digits
+    (e.g. "Movie.2019.1080p.mkv") can never be mistaken for a message id.
+    """
+    first_segment = path.split("/", 1)[0]
+
+    match = _COMBINED_RE.match(first_segment)
     if match:
         return int(match.group(2)), match.group(1)
-    m = re.search(r"(\d+)(?:/\S+)?", path)
-    if not m:
+
+    match = _ID_FIRST_SEGMENT_RE.match(first_segment)
+    if not match:
         raise web.HTTPBadRequest(text="Invalid path")
+
     secure_hash = request.rel_url.query.get("hash")
     if not secure_hash:
         raise web.HTTPBadRequest(text="Missing hash")
-    return int(m.group(1)), secure_hash
+
+    return int(match.group(1)), secure_hash
 
 
 @routes.get("/", allow_head=True)
@@ -44,7 +60,11 @@ async def watch_handler(request: web.Request):
     except FIleNotFound as e:
         raise web.HTTPNotFound(text=e.message)
     except (AttributeError, BadStatusLine, ConnectionResetError):
-        pass
+        # Client went away mid-render: return an explicit empty response instead
+        # of falling through to None (which aiohttp turns into a confusing 500).
+        return web.Response(status=499, text="")
+    except web.HTTPException:
+        raise
     except Exception as e:
         logging.critical(e.with_traceback(None))
         raise web.HTTPInternalServerError(text=str(e))
@@ -52,15 +72,27 @@ async def watch_handler(request: web.Request):
 
 @routes.get(r"/api/tracks/{path:\S+}", allow_head=True)
 async def tracks_handler(request: web.Request):
+    """Audio stream list plus the real container duration.
+
+    Response: {"tracks": [...], "duration": <seconds>}
+    """
     try:
         path = request.match_info["path"]
         id, secure_hash = parse_id_hash(path, request)
-        tracks = await get_tracks(id, secure_hash)
-        return web.json_response(tracks)
+        info = await get_track_info(id, secure_hash)
+        return web.json_response(
+            {
+                "tracks": info.get("tracks", []),
+                "duration": info.get("duration", 0.0),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
     except InvalidHash as e:
         raise web.HTTPForbidden(text=e.message)
     except FIleNotFound as e:
         raise web.HTTPNotFound(text=e.message)
+    except web.HTTPException:
+        raise
     except Exception as e:
         logging.exception("tracks_handler error")
         raise web.HTTPInternalServerError(text=str(e))
@@ -81,16 +113,15 @@ async def mux_handler(request: web.Request):
             except ValueError:
                 start_time = 0.0
 
-        # CHANGED: was mux_av_stream(...) which piped ffmpeg output straight
-        # to the response (live-stream style, no real seeking).
-        # Now serve_track(...) builds to a file on disk first (or reuses a
-        # completed cached file), enabling real Range-based seeking once a
-        # full build finishes.
-        return await serve_track(request, id, secure_hash, stream_index, start_time)
+        return await mux_av_stream(request, id, secure_hash, stream_index, start_time)
     except InvalidHash as e:
         raise web.HTTPForbidden(text=e.message)
     except FIleNotFound as e:
         raise web.HTTPNotFound(text=e.message)
+    except (ConnectionResetError, BrokenPipeError):
+        return web.Response(status=499, text="")
+    except web.HTTPException:
+        raise
     except Exception as e:
         logging.exception("mux_handler error")
         raise web.HTTPInternalServerError(text=str(e))
@@ -107,7 +138,9 @@ async def stream_handler(request: web.Request):
     except FIleNotFound as e:
         raise web.HTTPNotFound(text=e.message)
     except (AttributeError, BadStatusLine, ConnectionResetError):
-        pass
+        return web.Response(status=499, text="")
+    except web.HTTPException:
+        raise
     except Exception as e:
         logging.critical(e.with_traceback(None))
         raise web.HTTPInternalServerError(text=str(e))
@@ -116,8 +149,35 @@ async def stream_handler(request: web.Request):
 class_cache = {}
 
 
+def _parse_range(range_header: str, file_size: int):
+    """Parse a single byte range. Returns (from, until) or None if unusable."""
+    if not range_header:
+        return None
+    match = re.match(r"^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$", range_header)
+    if not match:
+        # Malformed or multi-range: caller answers 416 instead of blowing up.
+        return None
+
+    start_raw, end_raw = match.group(1), match.group(2)
+    if not start_raw and not end_raw:
+        return None
+
+    if not start_raw:
+        # Suffix range: last N bytes.
+        length = int(end_raw)
+        if length <= 0:
+            return None
+        from_bytes = max(0, file_size - length)
+        until_bytes = file_size - 1
+    else:
+        from_bytes = int(start_raw)
+        until_bytes = int(end_raw) if end_raw else file_size - 1
+
+    return from_bytes, until_bytes
+
+
 async def media_streamer(request: web.Request, id: int, secure_hash: str):
-    range_header = request.headers.get("Range", 0)
+    range_header = request.headers.get("Range")
     index = min(work_loads, key=work_loads.get)
     faster_client = multi_clients[index]
 
@@ -136,18 +196,24 @@ async def media_streamer(request: web.Request, id: int, secure_hash: str):
 
     file_size = file_id.file_size
 
-    if range_header:
-        from_bytes, until_bytes = range_header.replace("bytes=", "").split("-")
-        from_bytes = int(from_bytes)
-        until_bytes = int(until_bytes) if until_bytes else file_size - 1
-    else:
-        from_bytes = request.http_range.start or 0
-        until_bytes = (request.http_range.stop or file_size) - 1
-
-    if (until_bytes > file_size) or (from_bytes < 0) or (until_bytes < from_bytes):
+    parsed = _parse_range(range_header, file_size) if range_header else None
+    if range_header and parsed is None:
         return web.Response(
             status=416,
-            body="416: Range not satisfiable",
+            text="416: Range not satisfiable",
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
+
+    if parsed:
+        from_bytes, until_bytes = parsed
+    else:
+        from_bytes = 0
+        until_bytes = file_size - 1
+
+    if (until_bytes >= file_size) or (from_bytes < 0) or (until_bytes < from_bytes):
+        return web.Response(
+            status=416,
+            text="416: Range not satisfiable",
             headers={"Content-Range": f"bytes */{file_size}"},
         )
 
