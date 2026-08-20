@@ -9,7 +9,7 @@ from Deendayal_botz.Bot import multi_clients, work_loads
 from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 from Deendayal_botz.util.custom_dl import ByteStreamer
 from Deendayal_botz.util.render_template import render_page
-from Deendayal_botz.util.audio_tracks import get_tracks, mux_av_stream
+from Deendayal_botz.util.audio_tracks import get_tracks, serve_track
 from info import *
 
 routes = web.RouteTableDef()
@@ -81,7 +81,12 @@ async def mux_handler(request: web.Request):
             except ValueError:
                 start_time = 0.0
 
-        return await mux_av_stream(request, id, secure_hash, stream_index, start_time)
+        # CHANGED: was mux_av_stream(...) which piped ffmpeg output straight
+        # to the response (live-stream style, no real seeking).
+        # Now serve_track(...) builds to a file on disk first (or reuses a
+        # completed cached file), enabling real Range-based seeking once a
+        # full build finishes.
+        return await serve_track(request, id, secure_hash, stream_index, start_time)
     except InvalidHash as e:
         raise web.HTTPForbidden(text=e.message)
     except FIleNotFound as e:
