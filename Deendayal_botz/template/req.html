@@ -29,7 +29,7 @@
       background: linear-gradient(90deg, var(--cyan), var(--violet));
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     }
-    .live { font-size: 0.75rem; color: var(--cyan); border: 1px solid rgba(0,245,212,.35); padding: 4px 10px; border-radius: 99px; }
+    .live { font-size: .75rem; color: var(--cyan); border: 1px solid rgba(0,245,212,.35); padding: 4px 10px; border-radius: 99px; }
     .player-box {
       position: relative; border-radius: var(--r); overflow: hidden; background: #000;
       box-shadow: 0 20px 50px rgba(0,0,0,.45); border: 1px solid var(--border);
@@ -49,7 +49,7 @@
       border: 3px solid rgba(255,255,255,.12); border-top-color: var(--cyan);
       animation: spin .85s linear infinite;
     }
-    .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; }
+    .load-text { color: var(--muted); font-size: .9rem; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .file-card {
       margin-top: 16px; background: var(--glass); border: 1px solid var(--border);
@@ -64,7 +64,7 @@
     .media-bar .label { font-size: .8rem; color: var(--muted); font-weight: 600; }
     .chip {
       border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text);
-      border-radius: 99px; padding: 8px 14px; font-size: .82rem; font-weight: 500; cursor: pointer;
+      border-radius: 99px; padding: 8px 14px; font-size: .82rem; cursor: pointer;
     }
     .chip:hover { border-color: rgba(157,111,255,.45); background: rgba(157,111,255,.12); }
     .chip.active {
@@ -104,7 +104,7 @@
 
     <div class="player-box">
       <video id="player" playsinline preload="metadata" controls>
-        <source src="{{file_url}}" id="videoSource">
+        <source src="{{file_url}}">
       </video>
       <div id="mediaLoadingUI">
         <div class="load-ring"></div>
@@ -114,7 +114,7 @@
 
     <div class="file-card">
       <div class="file-title">{{file_name}}</div>
-      <div class="file-meta">Size: {{file_size}}</div>
+      <div class="file-meta" id="fileMeta">Size: {{file_size}}</div>
     </div>
 
     <div class="media-bar">
@@ -132,8 +132,8 @@
     </div>
 
     <div class="note">
-      Language switch builds one stream (video + audio). First switch may take a moment; then play continues while data loads.
-      MX / VLC still use the original multi-audio file.
+      Default = original file (full duration + normal seek). Other languages = one combined stream (video + audio).
+      Seek on a language reloads from that time. First switch may take a moment.
     </div>
     <footer>© Deendayal Stream · For personal use only</footer>
   </div>
@@ -141,9 +141,15 @@
   <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
   <script>
     const ORIGINAL_URL = "{{file_url}}";
+    const TRACK_DEFAULT = 0; // 0 = original file (go back to default)
+
     let player = null;
-    let activeTrackIdx = null;
+    let activeTrackIdx = TRACK_DEFAULT;
     let switching = false;
+    let ignoreSeek = false;
+    let seekReloadTimer = null;
+    let knownDuration = 0;
+    let playbackBase = 0;
 
     function getVideo() { return document.querySelector('#player'); }
 
@@ -161,11 +167,19 @@
       }
     }
 
+    function movieTime() {
+      const vid = getVideo();
+      if (!vid) return playbackBase;
+      if (activeTrackIdx === TRACK_DEFAULT) return vid.currentTime || 0;
+      return playbackBase + (vid.currentTime || 0);
+    }
+
     function buildMuxUrl(streamIndex, atTime) {
       const u = new URL(ORIGINAL_URL, window.location.origin);
       const parts = u.pathname.split('/').filter(Boolean);
       u.pathname = '/mux/' + streamIndex + '/' + parts.join('/');
       if (atTime > 0) u.searchParams.set('t', String(Math.floor(atTime)));
+      u.searchParams.set('_', String(Date.now()));
       return u.toString();
     }
 
@@ -195,42 +209,44 @@
 
     function markActiveChip(streamIndex) {
       document.querySelectorAll('#audioPanel .chip').forEach(function (el) {
-        el.classList.toggle(
-          'active',
-          String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex)
-        );
+        el.classList.toggle('active', String(el.dataset.index) === String(streamIndex));
       });
     }
 
-    function setVideoSource(url, wasPlaying) {
+    function setMuxSource(streamIndex, baseTime, wasPlaying) {
       const vid = getVideo();
       if (!vid) return;
+
       switching = true;
-      showLoading(true, 'Preparing audio…');
+      ignoreSeek = true;
+      playbackBase = baseTime || 0;
+      activeTrackIdx = streamIndex;
+      showLoading(true, 'Preparing…');
+
+      const url = buildMuxUrl(streamIndex, baseTime);
 
       const onReady = function () {
         vid.removeEventListener('loadeddata', onReady);
         switching = false;
         showLoading(false);
+        try { vid.currentTime = 0; } catch (e) {}
         if (wasPlaying) vid.play().catch(function () {});
+        setTimeout(function () { ignoreSeek = false; }, 900);
       };
       vid.addEventListener('loadeddata', onReady);
 
       if (player) {
-        player.source = {
-          type: 'video',
-          sources: [{ src: url, type: 'video/mp4' }]
-        };
+        player.source = { type: 'video', sources: [{ src: url, type: 'video/mp4' }] };
       } else {
         vid.src = url;
         vid.load();
       }
 
-      // safety timeout so UI never sticks forever
       setTimeout(function () {
         if (switching) {
           switching = false;
           showLoading(false);
+          ignoreSeek = false;
         }
       }, 120000);
     }
@@ -239,28 +255,65 @@
       const vid = getVideo();
       if (!vid || switching) return;
 
+      streamIndex = Number(streamIndex);
       const wasPlaying = !vid.paused;
-      const t = vid.currentTime || 0;
+      const t = movieTime();
       vid.pause();
 
-      if (streamIndex === null || streamIndex === 'default') {
-        activeTrackIdx = null;
-        markActiveChip(null);
-        // original file — browser seek after load
-        setVideoSource(ORIGINAL_URL, wasPlaying);
-        const vid2 = getVideo();
-        const seekAfter = function () {
-          vid2.removeEventListener('loadeddata', seekAfter);
-          try { if (t > 0) vid2.currentTime = t; } catch (e) {}
+      // DEFAULT (0) → original file
+      if (streamIndex === TRACK_DEFAULT) {
+        activeTrackIdx = TRACK_DEFAULT;
+        playbackBase = 0;
+        markActiveChip(TRACK_DEFAULT);
+        switching = true;
+        ignoreSeek = true;
+        showLoading(true, 'Loading…');
+
+        if (player) {
+          player.source = { type: 'video', sources: [{ src: ORIGINAL_URL }] };
+        } else {
+          vid.src = ORIGINAL_URL;
+          vid.load();
+        }
+
+        const after = function () {
+          vid.removeEventListener('loadeddata', after);
+          try {
+            if (t > 0) {
+              const cap = (isFinite(vid.duration) && vid.duration > 0) ? vid.duration - 0.3 : t;
+              vid.currentTime = Math.min(t, Math.max(0, cap));
+            }
+          } catch (e) {}
+          switching = false;
+          showLoading(false);
+          if (wasPlaying) vid.play().catch(function () {});
+          setTimeout(function () { ignoreSeek = false; }, 900);
         };
-        vid2.addEventListener('loadeddata', seekAfter);
+        vid.addEventListener('loadeddata', after);
         return;
       }
 
-      activeTrackIdx = streamIndex;
+      // Other language → mux
       markActiveChip(streamIndex);
-      // server starts near t via ?t=
-      setVideoSource(buildMuxUrl(streamIndex, t), wasPlaying);
+      setMuxSource(streamIndex, t, wasPlaying);
+    }
+
+    function onUserSeek() {
+      if (ignoreSeek || switching) return;
+      if (activeTrackIdx === TRACK_DEFAULT) return;
+
+      const vid = getVideo();
+      if (!vid) return;
+
+      let t = playbackBase + (vid.currentTime || 0);
+      if (knownDuration > 0) t = Math.max(0, Math.min(t, knownDuration - 0.5));
+
+      const wasPlaying = !vid.paused;
+      if (seekReloadTimer) clearTimeout(seekReloadTimer);
+      seekReloadTimer = setTimeout(function () {
+        if (ignoreSeek || activeTrackIdx === TRACK_DEFAULT) return;
+        setMuxSource(activeTrackIdx, t, wasPlaying);
+      }, 350);
     }
 
     function renderAudioPanel(tracks) {
@@ -275,12 +328,11 @@
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'chip' + (idx === 0 ? ' active' : '');
-        b.dataset.index = idx === 0 ? 'default' : track.index;
+        // First chip = 0 (default original). Others = real ffmpeg index
+        const id = (idx === 0) ? TRACK_DEFAULT : track.index;
+        b.dataset.index = String(id);
         b.textContent = trackLabel(track, idx);
-        b.onclick = function () {
-          if (idx === 0) switchLanguage(null);
-          else switchLanguage(track.index);
-        };
+        b.onclick = function () { switchLanguage(id); };
         panel.appendChild(b);
       });
     }
@@ -305,6 +357,7 @@
 
     document.addEventListener('DOMContentLoaded', function () {
       showLoading(true, 'Loading…');
+
       player = new Plyr('#player', {
         controls: ['play-large','rewind','play','fast-forward','progress','current-time','duration','mute','volume','settings','fullscreen'],
         settings: ['speed'],
@@ -314,6 +367,19 @@
 
       const vid = getVideo();
       if (vid) {
+        vid.addEventListener('loadedmetadata', function () {
+          if (activeTrackIdx === TRACK_DEFAULT && isFinite(vid.duration) && vid.duration > 0) {
+            knownDuration = vid.duration;
+            const meta = document.getElementById('fileMeta');
+            if (meta && !meta.dataset.dur) {
+              meta.dataset.dur = '1';
+              const m = Math.floor(knownDuration / 60);
+              const s = Math.floor(knownDuration % 60);
+              meta.textContent += ' · ' + m + 'm ' + s + 's';
+            }
+          }
+        });
+        vid.addEventListener('seeked', onUserSeek);
         ['loadeddata', 'canplay', 'playing'].forEach(function (ev) {
           vid.addEventListener(ev, function () {
             if (!switching) showLoading(false);
