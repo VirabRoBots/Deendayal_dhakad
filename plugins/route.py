@@ -1,5 +1,4 @@
 from aiohttp import web
-
 import re
 import math
 import logging
@@ -10,23 +9,16 @@ from Deendayal_botz.Bot import multi_clients, work_loads
 from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 from Deendayal_botz.util.custom_dl import ByteStreamer
 from Deendayal_botz.util.render_template import render_page
-from Deendayal_botz.util.audio_tracks import get_track_info, mux_av_stream
+from Deendayal_botz.util.audio_tracks import get_track_info, stream_audio_file
 from info import *
 
 routes = web.RouteTableDef()
 
-# <6-char hash><message id>, e.g. "AbC1_2345678"
 _COMBINED_RE = re.compile(r"^([a-zA-Z0-9_-]{6})(\d+)")
-# leading "<message id>" of the FIRST path segment only, e.g. "12345/Movie.2019.mkv"
 _ID_FIRST_SEGMENT_RE = re.compile(r"^(\d+)")
 
 
 def parse_id_hash(path: str, request: web.Request):
-    """Resolve (message_id, secure_hash) from a stream path.
-
-    Anchored on the first path segment so a filename containing digits
-    (e.g. "Movie.2019.1080p.mkv") can never be mistaken for a message id.
-    """
     first_segment = path.split("/", 1)[0]
 
     match = _COMBINED_RE.match(first_segment)
@@ -54,14 +46,15 @@ async def watch_handler(request: web.Request):
     try:
         path = request.match_info["path"]
         id, secure_hash = parse_id_hash(path, request)
-        return web.Response(text=await render_page(id, secure_hash), content_type="text/html")
+        return web.Response(
+            text=await render_page(id, secure_hash),
+            content_type="text/html",
+        )
     except InvalidHash as e:
         raise web.HTTPForbidden(text=e.message)
     except FIleNotFound as e:
         raise web.HTTPNotFound(text=e.message)
     except (AttributeError, BadStatusLine, ConnectionResetError):
-        # Client went away mid-render: return an explicit empty response instead
-        # of falling through to None (which aiohttp turns into a confusing 500).
         return web.Response(status=499, text="")
     except web.HTTPException:
         raise
@@ -72,10 +65,6 @@ async def watch_handler(request: web.Request):
 
 @routes.get(r"/api/tracks/{path:\S+}", allow_head=True)
 async def tracks_handler(request: web.Request):
-    """Audio stream list plus the real container duration.
-
-    Response: {"tracks": [...], "duration": <seconds>}
-    """
     try:
         path = request.match_info["path"]
         id, secure_hash = parse_id_hash(path, request)
@@ -98,22 +87,13 @@ async def tracks_handler(request: web.Request):
         raise web.HTTPInternalServerError(text=str(e))
 
 
-@routes.get(r"/mux/{stream_index:\d+}/{path:\S+}", allow_head=True)
-async def mux_handler(request: web.Request):
+@routes.get(r"/audio/{stream_index:\d+}/{path:\S+}", allow_head=True)
+async def audio_handler(request: web.Request):
     try:
         path = request.match_info["path"]
         stream_index = int(request.match_info["stream_index"])
         id, secure_hash = parse_id_hash(path, request)
-
-        start_time = 0.0
-        raw_t = request.rel_url.query.get("t")
-        if raw_t:
-            try:
-                start_time = max(0.0, float(raw_t))
-            except ValueError:
-                start_time = 0.0
-
-        return await mux_av_stream(request, id, secure_hash, stream_index, start_time)
+        return await stream_audio_file(request, id, secure_hash, stream_index)
     except InvalidHash as e:
         raise web.HTTPForbidden(text=e.message)
     except FIleNotFound as e:
@@ -123,7 +103,7 @@ async def mux_handler(request: web.Request):
     except web.HTTPException:
         raise
     except Exception as e:
-        logging.exception("mux_handler error")
+        logging.exception("audio_handler error")
         raise web.HTTPInternalServerError(text=str(e))
 
 
@@ -150,20 +130,15 @@ class_cache = {}
 
 
 def _parse_range(range_header: str, file_size: int):
-    """Parse a single byte range. Returns (from, until) or None if unusable."""
     if not range_header:
         return None
     match = re.match(r"^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$", range_header)
     if not match:
-        # Malformed or multi-range: caller answers 416 instead of blowing up.
         return None
-
     start_raw, end_raw = match.group(1), match.group(2)
     if not start_raw and not end_raw:
         return None
-
     if not start_raw:
-        # Suffix range: last N bytes.
         length = int(end_raw)
         if length <= 0:
             return None
@@ -172,7 +147,6 @@ def _parse_range(range_header: str, file_size: int):
     else:
         from_bytes = int(start_raw)
         until_bytes = int(end_raw) if end_raw else file_size - 1
-
     return from_bytes, until_bytes
 
 
