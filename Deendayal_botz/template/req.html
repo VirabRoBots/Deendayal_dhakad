@@ -277,16 +277,20 @@ function updateTimelineLoop() {
       showLoading(true, label || 'Loading…');
       try { v.pause(); } catch (e) {}
 
-      var onReady = function () {
-        if (token !== loadToken) return;
-        v.removeEventListener('loadeddata', onReady);
-        preparing = false;
-        showLoading(false);
-        try { v.currentTime = 0; } catch (e) {}
-        renderTimeline();
-        if (wasPlaying) v.play().catch(function () {});
-      };
-      v.addEventListener('loadeddata', onReady);
+      v.addEventListener('loadedmetadata', function onMeta() {
+  if (token !== loadToken) return;
+  v.removeEventListener('loadedmetadata', onMeta);
+  preparing = false;
+  showLoading(false);
+  
+  // Set current time to baseTime (where you were) instead of 0
+  try { 
+    v.currentTime = baseTime; 
+  } catch (e) {}
+  
+  renderTimeline();
+  if (wasPlaying) v.play().catch(function () {});
+});
 
       if (player) {
         if (activeTrackIdx === TRACK_DEFAULT) {
