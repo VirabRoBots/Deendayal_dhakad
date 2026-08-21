@@ -184,6 +184,7 @@
     let preparing = false;
     let dragging = false;
     let dragValue = 0;
+    let timelineFrame = 0;
     let seekTimer = null;
 
     function $(id) { return document.getElementById(id); }
@@ -261,6 +262,11 @@
       $('tlCurrent').textContent = fmt(cur);
       $('tlDuration').textContent = fmt(dur);
     }
+    
+function updateTimelineLoop() {
+  renderTimeline();
+  timelineFrame = requestAnimationFrame(updateTimelineLoop);
+}
 
     function loadSource(url, baseTime, wasPlaying, label) {
       var v = vid();
@@ -420,6 +426,8 @@
       });
 
       var v = vid();
+      updateTimelineLoop();
+      
       if (v) {
         v.addEventListener('loadedmetadata', function () {
           if (isFinite(v.duration) && v.duration > 0) {
