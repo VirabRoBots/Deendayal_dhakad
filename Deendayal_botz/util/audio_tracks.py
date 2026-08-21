@@ -1,6 +1,3 @@
-# Deendayal_botz/util/audio_tracks.py
-# Full-track audio from 0 + cache. Player: audio follows video.
-
 import os
 import json
 import asyncio
