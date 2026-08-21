@@ -1,5 +1,4 @@
-# Deendayal_botz/util/audio_tracks.py
-# Live mux from time T: video copy + audio (copy if AAC). No disk cache.
+# Live mux from T: video copy + audio (copy if AAC). No disk cache.
 
 import json
 import asyncio
@@ -123,10 +122,6 @@ async def mux_av_stream(
     stream_index: int,
     start_time: float = 0.0,
 ):
-    """
-    Live from T: video copy + selected audio (copy if AAC).
-    One stream → browser 0 = same scene. No disk cache.
-    """
     await _get_file_id(msg_id, secure_hash)
 
     entry = _meta(msg_id)
