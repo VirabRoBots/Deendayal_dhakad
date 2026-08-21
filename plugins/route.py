@@ -9,7 +9,7 @@ from Deendayal_botz.Bot import multi_clients, work_loads
 from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 from Deendayal_botz.util.custom_dl import ByteStreamer
 from Deendayal_botz.util.render_template import render_page
-from Deendayal_botz.util.audio_tracks import get_track_info, stream_audio_file
+from Deendayal_botz.util.audio_tracks import get_track_info, mux_av_stream
 from info import *
 
 routes = web.RouteTableDef()
@@ -20,19 +20,15 @@ _ID_FIRST_SEGMENT_RE = re.compile(r"^(\d+)")
 
 def parse_id_hash(path: str, request: web.Request):
     first_segment = path.split("/", 1)[0]
-
     match = _COMBINED_RE.match(first_segment)
     if match:
         return int(match.group(2)), match.group(1)
-
     match = _ID_FIRST_SEGMENT_RE.match(first_segment)
     if not match:
         raise web.HTTPBadRequest(text="Invalid path")
-
     secure_hash = request.rel_url.query.get("hash")
     if not secure_hash:
         raise web.HTTPBadRequest(text="Missing hash")
-
     return int(match.group(1)), secure_hash
 
 
@@ -87,23 +83,30 @@ async def tracks_handler(request: web.Request):
         raise web.HTTPInternalServerError(text=str(e))
 
 
-@routes.get(r"/audio/{stream_index:\d+}/{path:\S+}", allow_head=True)
-async def audio_handler(request: web.Request):
+@routes.get(r"/mux/{stream_index:\d+}/{path:\S+}", allow_head=True)
+async def mux_handler(request: web.Request):
     try:
         path = request.match_info["path"]
         stream_index = int(request.match_info["stream_index"])
         id, secure_hash = parse_id_hash(path, request)
-        return await stream_audio_file(request, id, secure_hash, stream_index)
+        start_time = 0.0
+        raw_t = request.rel_url.query.get("t")
+        if raw_t:
+            try:
+                start_time = max(0.0, float(raw_t))
+            except ValueError:
+                start_time = 0.0
+        return await mux_av_stream(request, id, secure_hash, stream_index, start_time)
     except InvalidHash as e:
         raise web.HTTPForbidden(text=e.message)
     except FIleNotFound as e:
         raise web.HTTPNotFound(text=e.message)
-    except (ConnectionResetError, BrokenPipeError):
+    except (ConnectionResetError, BrokenPipeError, ConnectionError):
         return web.Response(status=499, text="")
     except web.HTTPException:
         raise
     except Exception as e:
-        logging.exception("audio_handler error")
+        logging.exception("mux_handler error")
         raise web.HTTPInternalServerError(text=str(e))
 
 
@@ -169,7 +172,6 @@ async def media_streamer(request: web.Request, id: int, secure_hash: str):
         raise InvalidHash
 
     file_size = file_id.file_size
-
     parsed = _parse_range(range_header, file_size) if range_header else None
     if range_header and parsed is None:
         return web.Response(
