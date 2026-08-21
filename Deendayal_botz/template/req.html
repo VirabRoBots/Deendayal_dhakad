@@ -222,11 +222,14 @@
     }
 
     function movieTime() {
-      var v = vid();
-      if (!v) return segmentStart;
-      if (activeTrackIdx === TRACK_DEFAULT) return v.currentTime || 0;
-      return segmentStart + (v.currentTime || 0);
-    }
+  var v = vid();
+  if (!v) return 0;
+  if (activeTrackIdx === TRACK_DEFAULT) {
+    return v.currentTime || 0;
+  } else {
+    return segmentStart + (v.currentTime || 0);
+  }
+}
 
     function pathParts() {
       var u = new URL(ORIGINAL_URL, location.origin);
@@ -299,38 +302,38 @@
     }
 
     function seekTo(time) {
-      var v = vid();
-      if (!v) return;
-      ensureDuration();
-      if (totalDuration > 0) {
-        time = Math.max(0, Math.min(time, totalDuration - 0.5));
-      } else {
-        time = Math.max(0, time);
-      }
-      var wasPlaying = !v.paused;
+  var v = vid();
+  if (!v) return;
+  ensureDuration();
+  if (totalDuration > 0) {
+    time = Math.max(0, Math.min(time, totalDuration - 0.5));
+  } else {
+    time = Math.max(0, time);
+  }
+  var wasPlaying = !v.paused;
 
-      if (activeTrackIdx === TRACK_DEFAULT) {
-        segmentStart = 0;
-        if (String(v.currentSrc || v.src || '').indexOf('/mux/') !== -1) {
-          loadSource(ORIGINAL_URL, 0, wasPlaying, 'Loading…');
-          var once = function () {
-            v.removeEventListener('loadedmetadata', once);
-            try { v.currentTime = time; } catch (e) {}
-            renderTimeline();
-          };
-          v.addEventListener('loadedmetadata', once);
-          return;
-        }
+  if (activeTrackIdx === TRACK_DEFAULT) {
+    segmentStart = 0;
+    if (String(v.currentSrc || v.src || '').indexOf('/mux/') !== -1) {
+      loadSource(ORIGINAL_URL, 0, wasPlaying, 'Loading…');
+      var once = function () {
+        v.removeEventListener('loadedmetadata', once);
         try { v.currentTime = time; } catch (e) {}
-        if (wasPlaying) v.play().catch(function () {});
         renderTimeline();
-        return;
-      }
-
-      // Other language: new live mux from movie time
-      loadSource(buildMuxUrl(activeTrackIdx, time), time, wasPlaying, 'Seeking…');
+      };
+      v.addEventListener('loadedmetadata', once);
+      return;
     }
+    try { v.currentTime = time; } catch (e) {}
+    if (wasPlaying) v.play().catch(function () {});
+    renderTimeline();
+    return;
+  }
 
+  // For non-default tracks: reload mux from new time
+  loadSource(buildMuxUrl(activeTrackIdx, time), time, wasPlaying, 'Seeking…');
+    }
+    
     function switchLanguage(streamIndex) {
       var v = vid();
       if (!v || preparing) return;
