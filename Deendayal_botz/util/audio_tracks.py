@@ -1,9 +1,9 @@
-import os
+# Deendayal_botz/util/audio_tracks.py
+# Live mux from time T: video copy + audio (copy if AAC). No disk cache.
+
 import json
 import asyncio
 import logging
-import time
-from pathlib import Path
 
 from aiohttp import web
 
@@ -13,19 +13,23 @@ from Deendayal_botz.util.file_properties import get_file_ids
 from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 
 LOCAL_PORT = int(PORT)
-TEMP_DIR = Path("/tmp/audio_cache")
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
-
-_file_cache = {}
-_extract_locks = {}
 COPYABLE_AUDIO = {"aac", "mp4a", "mp4a.40.2"}
-CACHE_MAX_AGE_SECONDS = 12 * 60 * 60
-CACHE_MIN_FREE_BYTES = 1 * 1024 ** 3
 PROBE_TIMEOUT_SECONDS = 40
+MAX_CONCURRENT_MUX = 3
+_mux_semaphore = asyncio.Semaphore(MAX_CONCURRENT_MUX)
+_file_cache = {}
+CACHE_MAX_ENTRIES = 500
 
 
 def _meta(msg_id: int) -> dict:
-    return _file_cache.setdefault(msg_id, {"tracks": None, "duration": 0.0})
+    entry = _file_cache.get(msg_id)
+    if entry is None:
+        if len(_file_cache) >= CACHE_MAX_ENTRIES:
+            for key in list(_file_cache.keys())[: CACHE_MAX_ENTRIES // 4]:
+                _file_cache.pop(key, None)
+        entry = {"tracks": None, "duration": 0.0}
+        _file_cache[msg_id] = entry
+    return entry
 
 
 async def _get_file_id(msg_id: int, secure_hash: str):
@@ -46,10 +50,6 @@ def _codec_for_stream(msg_id: int, stream_index: int) -> str:
         if t.get("index") == stream_index:
             return (t.get("codec_name") or "").lower()
     return ""
-
-
-def _cache_path(msg_id: int, stream_index: int) -> Path:
-    return TEMP_DIR / f"{msg_id}_track{stream_index}.aac"
 
 
 async def get_track_info(msg_id: int, secure_hash: str) -> dict:
@@ -113,163 +113,114 @@ async def get_track_info(msg_id: int, secure_hash: str) -> dict:
 
 
 async def get_tracks(msg_id: int, secure_hash: str) -> list:
-    info = await get_track_info(msg_id, secure_hash)
-    return info.get("tracks", [])
+    return (await get_track_info(msg_id, secure_hash)).get("tracks", [])
 
 
-async def _ensure_audio_file(msg_id: int, secure_hash: str, stream_index: int) -> Path:
-    path = _cache_path(msg_id, stream_index)
-    if path.exists() and path.stat().st_size > 0:
-        return path
-
+async def mux_av_stream(
+    request: web.Request,
+    msg_id: int,
+    secure_hash: str,
+    stream_index: int,
+    start_time: float = 0.0,
+):
+    """
+    Live from T: video copy + selected audio (copy if AAC).
+    One stream → browser 0 = same scene. No disk cache.
+    """
     await _get_file_id(msg_id, secure_hash)
+
     entry = _meta(msg_id)
     if not entry.get("tracks"):
-        await get_track_info(msg_id, secure_hash)
+        try:
+            await get_track_info(msg_id, secure_hash)
+        except Exception as e:
+            logging.warning(f"[Mux] probe failed: {e}")
 
     codec = _codec_for_stream(msg_id, stream_index)
     use_copy = codec in COPYABLE_AUDIO
     internal_url = _internal_stream_url(msg_id, secure_hash)
-    lock = _extract_locks.setdefault((msg_id, stream_index), asyncio.Lock())
 
-    async with lock:
-        if path.exists() and path.stat().st_size > 0:
-            return path
+    logging.info(
+        f"[Mux] LIVE msg={msg_id} audio={stream_index} codec={codec or '?'} "
+        f"mode={'copy' if use_copy else 'encode'} start={start_time:.2f}s"
+    )
 
-        tmp = path.with_suffix(".part.aac")
-        if tmp.exists():
-            try:
-                tmp.unlink()
-            except Exception:
-                pass
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-seekable", "1",
+        "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2",
+        "-rw_timeout", "30000000",
+    ]
+    if start_time > 0:
+        cmd += ["-ss", f"{start_time:.3f}"]
 
-        logging.info(
-            f"[AudioTracks] extract full msg={msg_id} stream={stream_index} "
-            f"codec={codec or '?'} mode={'copy' if use_copy else 'encode'}"
-        )
+    cmd += [
+        "-i", internal_url,
+        "-map", "0:v:0",
+        "-map", f"0:{stream_index}",
+        "-c:v", "copy",
+    ]
+    if use_copy:
+        cmd += ["-c:a", "copy"]
+    else:
+        cmd += ["-c:a", "aac", "-b:a", "128k", "-ac", "2"]
 
-        cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-nostdin",
-            "-seekable", "1",
-            "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2",
-            "-rw_timeout", "30000000",
-            "-i", internal_url,
-            "-map", f"0:{stream_index}",
-            "-vn",
-        ]
-        if use_copy:
-            cmd += ["-c:a", "copy", "-f", "adts"]
-        else:
-            cmd += ["-c:a", "aac", "-b:a", "96k", "-ac", "2", "-f", "adts"]
-        cmd += [str(tmp)]
+    cmd += [
+        "-avoid_negative_ts", "make_zero",
+        "-f", "mp4",
+        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "pipe:1",
+    ]
 
+    async with _mux_semaphore:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, err = await proc.communicate()
 
-        if proc.returncode != 0 or not tmp.exists() or tmp.stat().st_size <= 0:
-            logging.error(f"[AudioTracks] extract failed: {err[:300]!r}")
-            try:
-                if tmp.exists():
-                    tmp.unlink()
-            except Exception:
-                pass
-            raise RuntimeError("Audio extract failed")
-
-        tmp.rename(path)
-        return path
-
-
-async def stream_audio_file(
-    request: web.Request, msg_id: int, secure_hash: str, stream_index: int
-):
-    try:
-        path = await _ensure_audio_file(msg_id, secure_hash, stream_index)
-    except Exception as e:
-        logging.exception("[AudioTracks] ensure failed")
-        raise web.HTTPInternalServerError(text=str(e))
-
-    file_size = path.stat().st_size
-    range_header = request.headers.get("Range")
-
-    if range_header:
-        try:
-            _, rng = range_header.split("=", 1)
-            start_s, end_s = (rng + "-").split("-")[:2]
-            start = int(start_s) if start_s else 0
-            end = int(end_s) if end_s else file_size - 1
-            end = min(end, file_size - 1)
-            if start < 0 or start > end:
-                raise ValueError("bad range")
-        except Exception:
-            return web.Response(
-                status=416,
-                headers={"Content-Range": f"bytes */{file_size}"},
-            )
-        length = end - start + 1
-        with open(path, "rb") as f:
-            f.seek(start)
-            data = f.read(length)
-        return web.Response(
-            status=206,
-            body=data,
+        resp = web.StreamResponse(
+            status=200,
             headers={
-                "Content-Type": "audio/aac",
-                "Content-Range": f"bytes {start}-{end}/{file_size}",
-                "Content-Length": str(length),
-                "Accept-Ranges": "bytes",
-                "Cache-Control": "public, max-age=3600",
+                "Content-Type": "video/mp4",
+                "Cache-Control": "no-store",
+                "Accept-Ranges": "none",
+                "X-Accel-Buffering": "no",
             },
         )
+        try:
+            await resp.prepare(request)
+            while True:
+                chunk = await proc.stdout.read(64 * 1024)
+                if not chunk:
+                    break
+                try:
+                    await resp.write(chunk)
+                except (ConnectionResetError, ConnectionError, BrokenPipeError, asyncio.CancelledError):
+                    break
+                if request.transport is None or request.transport.is_closing():
+                    break
+        finally:
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            try:
+                _, err = await asyncio.wait_for(proc.communicate(), timeout=5)
+                if proc.returncode not in (0, None, -9, 255):
+                    logging.error(f"[Mux] ffmpeg exit={proc.returncode} err={err[:300]!r}")
+            except Exception:
+                pass
 
-    return web.FileResponse(
-        path,
-        headers={
-            "Content-Type": "audio/aac",
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=3600",
-        },
-    )
-
-
-def _dir_free_bytes(path: Path) -> int:
-    st = os.statvfs(path)
-    return st.f_bavail * st.f_frsize
+    return resp
 
 
 async def cleanup_audio_cache():
-    now = time.time()
-    files = sorted(
-        TEMP_DIR.glob("*.aac"),
-        key=lambda p: p.stat().st_mtime if p.exists() else 0,
-    )
-    for f in list(files):
-        try:
-            if f.exists() and now - f.stat().st_mtime > CACHE_MAX_AGE_SECONDS:
-                f.unlink()
-        except FileNotFoundError:
-            pass
-    files = sorted(
-        TEMP_DIR.glob("*.aac"),
-        key=lambda p: p.stat().st_mtime if p.exists() else 0,
-    )
-    while files and _dir_free_bytes(TEMP_DIR) < CACHE_MIN_FREE_BYTES:
-        oldest = files.pop(0)
-        try:
-            if oldest.exists():
-                oldest.unlink()
-        except FileNotFoundError:
-            pass
+    return None
 
 
 async def start_cache_cleanup_loop(interval_seconds: int = 3600):
     while True:
-        try:
-            await cleanup_audio_cache()
-        except Exception as e:
-            logging.error(f"[AudioTracks] cleanup: {e}")
         await asyncio.sleep(interval_seconds)
