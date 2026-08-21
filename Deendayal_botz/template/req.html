@@ -51,6 +51,31 @@
     }
     .load-text { color: var(--muted); font-size: .9rem; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .timeline {
+      margin-top: 12px; background: var(--glass); border: 1px solid var(--border);
+      border-radius: 14px; padding: 12px 14px;
+    }
+    .tl-track {
+      position: relative; height: 22px; display: flex; align-items: center; cursor: pointer;
+      touch-action: none;
+    }
+    .tl-rail {
+      position: absolute; left: 0; right: 0; height: 6px; border-radius: 99px;
+      background: rgba(255,255,255,.10);
+    }
+    .tl-fill {
+      position: absolute; left: 0; height: 6px; border-radius: 99px; width: 0%;
+      background: linear-gradient(90deg, var(--violet2), var(--cyan));
+    }
+    .tl-knob {
+      position: absolute; width: 14px; height: 14px; border-radius: 50%; background: #fff;
+      box-shadow: 0 0 0 4px rgba(124,58,237,.35); left: 0; transform: translateX(-50%);
+      pointer-events: none;
+    }
+    .tl-times {
+      display: flex; justify-content: space-between; margin-top: 8px;
+      font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums;
+    }
     .file-card {
       margin-top: 16px; background: var(--glass); border: 1px solid var(--border);
       border-radius: var(--r); padding: 16px 18px;
@@ -109,9 +134,21 @@
       </div>
     </div>
 
+    <div class="timeline">
+      <div class="tl-track" id="tlTrack">
+        <div class="tl-rail"></div>
+        <div class="tl-fill" id="tlFill"></div>
+        <div class="tl-knob" id="tlKnob"></div>
+      </div>
+      <div class="tl-times">
+        <span id="tlCurrent">0:00</span>
+        <span id="tlDuration">--:--</span>
+      </div>
+    </div>
+
     <div class="file-card">
       <div class="file-title">{{file_name}}</div>
-      <div class="file-meta">Size: {{file_size}}</div>
+      <div class="file-meta" id="fileMeta">Size: {{file_size}}</div>
     </div>
 
     <div class="media-bar">
@@ -128,8 +165,8 @@
     </div>
 
     <div class="note">
-      Default = original sound. Other languages: full audio is prepared once (first time can be slow),
-      then audio follows the video timeline. MX/VLC still best for multi-audio.
+      Default = original file (full quality, normal seek). Other languages = live video+audio from current time
+      (video copied, not re-encoded). Use the bar above to seek on alternate languages.
     </div>
     <footer>© Deendayal Stream</footer>
   </div>
@@ -138,25 +175,34 @@
   <script>
     const ORIGINAL_URL = "{{file_url}}";
     const TRACK_DEFAULT = 0;
-    const MAX_DRIFT = 0.25;
 
     let player = null;
     let activeTrackIdx = TRACK_DEFAULT;
-    let activeAudio = null;
+    let segmentStart = 0;
+    let totalDuration = 0;
+    let loadToken = 0;
     let preparing = false;
-    let audioCtx = null;
-    let vidGain = null;
-    let useFallbackMute = false;
-    let lastSync = 0;
-    let reqId = 0;
+    let dragging = false;
+    let dragValue = 0;
+    let seekTimer = null;
 
     function $(id) { return document.getElementById(id); }
     function vid() { return document.querySelector('#player'); }
 
+    function fmt(sec) {
+      if (!isFinite(sec) || sec < 0) return '--:--';
+      sec = Math.floor(sec);
+      var h = Math.floor(sec / 3600);
+      var m = Math.floor((sec % 3600) / 60);
+      var s = sec % 60;
+      var mm = (h > 0 && m < 10) ? '0' + m : String(m);
+      return (h > 0 ? h + ':' : '') + mm + ':' + (s < 10 ? '0' + s : s);
+    }
+
     function showLoading(on, text) {
-      const el = $('mediaLoadingUI');
-      const t = $('mediaLoadingText');
-      const p = document.querySelector('.plyr');
+      var el = $('mediaLoadingUI');
+      var t = $('mediaLoadingText');
+      var p = document.querySelector('.plyr');
       if (t && text) t.textContent = text;
       if (on) {
         if (el) el.classList.add('show');
@@ -167,89 +213,137 @@
       }
     }
 
+    function movieTime() {
+      var v = vid();
+      if (!v) return segmentStart;
+      if (activeTrackIdx === TRACK_DEFAULT) return v.currentTime || 0;
+      return segmentStart + (v.currentTime || 0);
+    }
+
     function pathParts() {
-      const u = new URL(ORIGINAL_URL, location.origin);
+      var u = new URL(ORIGINAL_URL, location.origin);
       return { u: u, parts: u.pathname.split('/').filter(Boolean) };
     }
 
-    function buildAudioUrl(streamIndex) {
-      const o = pathParts();
-      o.u.pathname = '/audio/' + streamIndex + '/' + o.parts.join('/');
+    function buildMuxUrl(streamIndex, atTime) {
+      var o = pathParts();
+      o.u.pathname = '/mux/' + streamIndex + '/' + o.parts.join('/');
+      if (atTime > 0) o.u.searchParams.set('t', String(Math.floor(atTime)));
+      o.u.searchParams.set('_', String(Date.now()));
       return o.u.toString();
     }
 
     function buildTracksUrl() {
-      const o = pathParts();
+      var o = pathParts();
       o.u.pathname = '/api/tracks/' + o.parts.join('/');
       return o.u.toString();
     }
 
-    function initGain(v) {
-      if (!v || v.__gain) return;
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) { useFallbackMute = true; return; }
-      try {
-        if (!audioCtx) audioCtx = new AC();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        const src = audioCtx.createMediaElementSource(v);
-        vidGain = audioCtx.createGain();
-        src.connect(vidGain);
-        vidGain.connect(audioCtx.destination);
-        v.__gain = true;
-        vidGain.gain.value = 1;
-      } catch (e) {
-        useFallbackMute = true;
-      }
+    function renderTimeline() {
+      var dur = totalDuration;
+      var cur = dragging ? dragValue : movieTime();
+      if (dur > 0) cur = Math.min(cur, dur);
+      var pct = dur > 0 ? (cur / dur) * 100 : 0;
+      $('tlFill').style.width = pct + '%';
+      $('tlKnob').style.left = pct + '%';
+      $('tlCurrent').textContent = fmt(cur);
+      $('tlDuration').textContent = fmt(dur);
     }
 
-    function silenceVideo(on) {
-      const v = vid();
-      initGain(v);
-      if (useFallbackMute) {
-        if (v) v.muted = !!on;
+    function loadSource(url, baseTime, wasPlaying, label) {
+      var v = vid();
+      if (!v) return;
+      var token = ++loadToken;
+      preparing = true;
+      segmentStart = baseTime || 0;
+      showLoading(true, label || 'Loading…');
+      try { v.pause(); } catch (e) {}
+
+      var onReady = function () {
+        if (token !== loadToken) return;
+        v.removeEventListener('loadeddata', onReady);
+        preparing = false;
+        showLoading(false);
+        try { v.currentTime = 0; } catch (e) {}
+        renderTimeline();
+        if (wasPlaying) v.play().catch(function () {});
+      };
+      v.addEventListener('loadeddata', onReady);
+
+      if (player) {
+        player.source = {
+          type: 'video',
+          sources: [{ src: url, type: activeTrackIdx === TRACK_DEFAULT ? undefined : 'video/mp4' }]
+        };
+        if (activeTrackIdx === TRACK_DEFAULT) {
+          player.source = { type: 'video', sources: [{ src: url }] };
+        }
+      } else {
+        v.src = url;
+        v.load();
+      }
+
+      setTimeout(function () {
+        if (token === loadToken) {
+          preparing = false;
+          showLoading(false);
+        }
+      }, 90000);
+    }
+
+    function seekTo(time) {
+      var v = vid();
+      if (!v) return;
+      if (totalDuration > 0) time = Math.max(0, Math.min(time, totalDuration - 0.5));
+      var wasPlaying = !v.paused;
+
+      if (activeTrackIdx === TRACK_DEFAULT) {
+        if (v.src && v.src.indexOf('/mux/') !== -1) {
+          loadSource(ORIGINAL_URL, 0, wasPlaying, 'Loading…');
+          var once = function () {
+            v.removeEventListener('loadedmetadata', once);
+            try { v.currentTime = time; } catch (e) {}
+          };
+          v.addEventListener('loadedmetadata', once);
+          return;
+        }
+        segmentStart = 0;
+        try { v.currentTime = time; } catch (e) {}
+        if (wasPlaying) v.play().catch(function () {});
+        renderTimeline();
         return;
       }
-      if (vidGain) vidGain.gain.value = on ? 0 : 1;
+
+      loadSource(buildMuxUrl(activeTrackIdx, time), time, wasPlaying, 'Preparing…');
     }
 
-    function destroyAudio() {
-      if (!activeAudio) return;
-      try {
-        activeAudio.pause();
-        activeAudio.removeAttribute('src');
-        activeAudio.load();
-        activeAudio.remove();
-      } catch (e) {}
-      activeAudio = null;
-    }
+    function switchLanguage(streamIndex) {
+      var v = vid();
+      if (!v || preparing) return;
+      streamIndex = Number(streamIndex);
+      if (streamIndex === activeTrackIdx) return;
 
-    function followVideo(force) {
-      const v = vid();
-      if (!v || !activeAudio || preparing) return;
-      if (activeTrackIdx === TRACK_DEFAULT) return;
-      if (v.paused && !force) return;
-      const target = v.currentTime || 0;
-      const drift = Math.abs((activeAudio.currentTime || 0) - target);
-      if (force || drift > MAX_DRIFT) {
-        try { activeAudio.currentTime = target; } catch (e) {}
+      var wasPlaying = !v.paused;
+      var t = movieTime();
+      activeTrackIdx = streamIndex;
+      markChip(streamIndex);
+
+      if (streamIndex === TRACK_DEFAULT) {
+        loadSource(ORIGINAL_URL, 0, wasPlaying, 'Loading…');
+        var once = function () {
+          v.removeEventListener('loadedmetadata', once);
+          try {
+            if (t > 0) {
+              var cap = (isFinite(v.duration) && v.duration > 0) ? v.duration - 0.3 : t;
+              v.currentTime = Math.min(t, Math.max(0, cap));
+            }
+          } catch (e) {}
+        };
+        v.addEventListener('loadedmetadata', once);
+        return;
       }
-    }
 
-    function syncPlayState() {
-      const v = vid();
-      if (!v || !activeAudio || preparing) return;
-      if (v.paused) {
-        if (!activeAudio.paused) activeAudio.pause();
-      } else {
-        followVideo(true);
-        if (activeAudio.paused) activeAudio.play().catch(function () {});
-      }
-    }
-
-    function syncVolume() {
-      if (!activeAudio || !player) return;
-      activeAudio.volume = player.volume;
-      activeAudio.muted = player.muted;
+      loadSource(buildMuxUrl(streamIndex, t), t, wasPlaying, 'Switching audio…');
     }
 
     function markChip(idx) {
@@ -258,97 +352,30 @@
       });
     }
 
-    function switchToDefault() {
-      reqId++;
-      preparing = false;
-      showLoading(false);
-      destroyAudio();
-      activeTrackIdx = TRACK_DEFAULT;
-      silenceVideo(false);
-      markChip(TRACK_DEFAULT);
-    }
-
-    function switchLanguage(streamIndex) {
-      const v = vid();
-      if (!v) return;
-      streamIndex = Number(streamIndex);
-
-      if (streamIndex === TRACK_DEFAULT) {
-        switchToDefault();
-        return;
-      }
-      if (streamIndex === activeTrackIdx && activeAudio) return;
-
-      const wasPlaying = !v.paused;
-      const my = ++reqId;
-      preparing = true;
-      showLoading(true, 'Preparing audio…');
-      if (wasPlaying) v.pause();
-
-      destroyAudio();
-      activeTrackIdx = streamIndex;
-      silenceVideo(true);
-      markChip(streamIndex);
-
-      const a = document.createElement('audio');
-      a.preload = 'auto';
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.src = buildAudioUrl(streamIndex);
-
-      a.addEventListener('canplay', function onReady() {
-        a.removeEventListener('canplay', onReady);
-        if (my !== reqId) {
-          try { a.remove(); } catch (e) {}
-          return;
-        }
-        activeAudio = a;
-        syncVolume();
-        try { activeAudio.currentTime = v.currentTime || 0; } catch (e) {}
-        preparing = false;
-        showLoading(false);
-        if (wasPlaying) {
-          activeAudio.play().catch(function () {});
-          v.play().catch(function () {});
-        }
-        followVideo(true);
-      });
-
-      a.addEventListener('error', function () {
-        if (my !== reqId) return;
-        preparing = false;
-        showLoading(false);
-        switchToDefault();
-        alert('Audio track failed. Back to default.');
-      });
-
-      a.load();
-    }
-
-    const LANG = {
+    var LANG = {
       eng: 'English', en: 'English', hin: 'Hindi', hi: 'Hindi',
       tam: 'Tamil', ta: 'Tamil', tel: 'Telugu', te: 'Telugu',
       mal: 'Malayalam', ml: 'Malayalam', kan: 'Kannada', kn: 'Kannada'
     };
 
     function trackLabel(track, idx) {
-      const tags = track.tags || {};
-      const lang = (tags.language || '').toLowerCase();
-      let label = LANG[lang] || lang || ('Track ' + (idx + 1));
+      var tags = track.tags || {};
+      var lang = (tags.language || '').toLowerCase();
+      var label = LANG[lang] || lang || ('Track ' + (idx + 1));
       if (idx === 0) label += ' (Default)';
       return label;
     }
 
     function renderTracks(tracks) {
-      const panel = $('audioPanel');
+      var panel = $('audioPanel');
       if (!panel || !tracks || tracks.length < 2) {
         $('btnAudio').style.display = 'none';
         return;
       }
       panel.innerHTML = '';
       tracks.forEach(function (track, idx) {
-        const id = idx === 0 ? TRACK_DEFAULT : track.index;
-        const b = document.createElement('button');
+        var id = idx === 0 ? TRACK_DEFAULT : track.index;
+        var b = document.createElement('button');
         b.type = 'button';
         b.className = 'chip' + (idx === 0 ? ' active' : '');
         b.dataset.index = String(id);
@@ -361,58 +388,66 @@
 
     document.addEventListener('DOMContentLoaded', function () {
       player = new Plyr('#player', {
-        controls: ['play-large', 'rewind', 'play', 'fast-forward', 'progress', 'current-time', 'duration', 'mute', 'volume', 'settings', 'fullscreen'],
+        controls: ['play-large', 'play', 'mute', 'volume', 'settings', 'fullscreen'],
         settings: ['speed'],
         seekTime: 10
       });
 
-      player.on('volumechange', syncVolume);
-      player.on('play', function () {
-        if (preparing) { player.pause(); return; }
-        syncPlayState();
-      });
-      player.on('pause', function () {
-        if (activeAudio && !activeAudio.paused) activeAudio.pause();
-      });
-
-      const v = vid();
+      var v = vid();
       if (v) {
-        v.addEventListener('play', function () {
-          if (preparing) { v.pause(); return; }
-          syncPlayState();
+        v.addEventListener('loadedmetadata', function () {
+          if (!totalDuration && activeTrackIdx === TRACK_DEFAULT &&
+              isFinite(v.duration) && v.duration > 0) {
+            totalDuration = v.duration;
+          }
+          renderTimeline();
         });
-        v.addEventListener('pause', function () {
-          if (activeAudio && !activeAudio.paused) activeAudio.pause();
-        });
-        v.addEventListener('seeked', function () {
-          followVideo(true);
-          syncPlayState();
-        });
+        v.addEventListener('timeupdate', renderTimeline);
         v.addEventListener('waiting', function () {
-          if (activeAudio && !activeAudio.paused) activeAudio.pause();
+          if (!preparing) showLoading(true, 'Buffering…');
         });
-        v.addEventListener('playing', function () { syncPlayState(); });
-        v.addEventListener('timeupdate', function () {
-          if (!activeAudio || preparing) return;
-          const now = performance.now();
-          if (now - lastSync < 300) return;
-          lastSync = now;
-          followVideo(false);
+        ['playing', 'canplay'].forEach(function (ev) {
+          v.addEventListener(ev, function () {
+            if (!preparing) showLoading(false);
+          });
         });
       }
+
+      var track = $('tlTrack');
+      track.addEventListener('pointerdown', function (e) {
+        if (!totalDuration) return;
+        track.setPointerCapture(e.pointerId);
+        dragging = true;
+        var rect = track.getBoundingClientRect();
+        var r = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        dragValue = r * totalDuration;
+        renderTimeline();
+      });
+      track.addEventListener('pointermove', function (e) {
+        if (!dragging || !totalDuration) return;
+        var rect = track.getBoundingClientRect();
+        var r = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        dragValue = r * totalDuration;
+        renderTimeline();
+      });
+      track.addEventListener('pointerup', function () {
+        if (!dragging) return;
+        dragging = false;
+        if (seekTimer) clearTimeout(seekTimer);
+        seekTimer = setTimeout(function () { seekTo(dragValue); }, 200);
+      });
 
       $('btnAudio').onclick = function () {
         $('audioPanel').classList.toggle('show');
       };
-
       $('copyBtn').onclick = function () {
-        const u = new URL(ORIGINAL_URL, location.origin).toString();
+        var u = new URL(ORIGINAL_URL, location.origin).toString();
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(u).then(function () { alert('Copied'); });
         } else prompt('Copy:', u);
       };
 
-      const full = new URL(ORIGINAL_URL, location.origin).toString();
+      var full = new URL(ORIGINAL_URL, location.origin).toString();
       $('vlcLink').href = 'vlc://' + full;
       $('mxLink').href = 'intent://' + full.replace(/^https?:\/\//, '') +
         '#Intent;type=video/*;package=com.mxtech.videoplayer.ad;end';
@@ -420,8 +455,18 @@
       fetch(buildTracksUrl())
         .then(function (r) { return r.json(); })
         .then(function (data) {
-          const tracks = Array.isArray(data) ? data : (data.tracks || []);
+          var tracks = Array.isArray(data) ? data : (data.tracks || []);
+          var dur = data && data.duration ? Number(data.duration) : 0;
+          if (dur > 0) totalDuration = dur;
           renderTracks(tracks);
+          if (totalDuration > 0) {
+            var meta = $('fileMeta');
+            if (meta && !meta.dataset.dur) {
+              meta.dataset.dur = '1';
+              meta.textContent += ' · ' + fmt(totalDuration);
+            }
+          }
+          renderTimeline();
         })
         .catch(function () {});
     });
