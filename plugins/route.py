@@ -90,7 +90,8 @@ async def audio_handler(request: web.Request):
             body=body,
             headers={
                 "Content-Type": "audio/aac",
-                "Accept-Ranges": "bytes",
+                # The extractor streams a live window; it cannot serve Range.
+                "Accept-Ranges": "none",
                 "Cache-Control": "no-store",
             },
         )
