@@ -68,6 +68,7 @@
     .plyr.controls-locked .plyr__control--overlaid {
       opacity: 0 !important; visibility: hidden !important; pointer-events: none !important;
     }
+    .seek-blocked .plyr__progress input { pointer-events: none; }
 
     #mediaLoadingUI {
       position: absolute; inset: 0; z-index: 9999;
@@ -191,7 +192,10 @@
     </div>
 
     <div class="note">
-      Changing audio track will restart the video from the beginning so audio and video stay perfectly in sync.
+      Multi-audio is supported in browser. Choosing a language, or jumping to a
+      new part of the video while a language is selected, takes a moment while
+      the server prepares audio for that spot. For best multi-audio experience
+      use MX Player or VLC.
     </div>
 
     <footer>© Deendayal Stream · For personal use only</footer>
@@ -200,24 +204,60 @@
   <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
   <script>
     const STREAM_URL = "{{file_url}}";
-    const SEEK_BUCKET_SECONDS = 10;
+    // Must match AUDIO_WINDOW_SECONDS in audio_tracks.py.
+    const AUDIO_WINDOW_SECONDS = 600;
+    // Ask for the follow-on window this early. The server needs time to run
+    // ffmpeg, so keep this generous.
+    const ROLLOVER_LEAD = 45;
+    // Above this drift the playback-rate trim is too slow. Fetch fresh audio.
+    const REFETCH_DRIFT = 1.5;
+    // A fresh audio element needs a moment between play() and real sound, so
+    // the next window is started this early. Calibration knob: measured on
+    // desktop Chrome, a 0.35 s lead landed the seam 0.14 s early and a 0.05 s
+    // lead landed it 0.28 s late, so the cost is about a quarter second.
+    // Raise it if the seam sounds late on your device, lower it if early.
+    const SEAM_LEAD = 0.25;
+
+    /* ------------------------------------------------------------------
+       Why this file never sets currentTime on an audio element.
+
+       /audio/ is a live chunked response. It has no Content-Length and it
+       cannot serve Range. Chrome therefore reports  seekable = [0,0]  even
+       though  buffered = [0, 600].  Writing currentTime is then clamped to
+       zero and the audio JUMPS BACK TO THE START of the window. Measured.
+
+       So the audio is never seeked. The server is asked to start the track
+       at the exact position we need, the element plays from 0, and drift is
+       trimmed with playbackRate. Anything that would need a seek asks the
+       server for fresh audio instead.
+       ------------------------------------------------------------------ */
 
     let player = null;
+    let activeAudio = null;
     let activeTrackIdx = null;
-    let isPreparing = false;
-    let wantPlayWhenReady = false;
+    // Movie time that activeAudio.currentTime === 0 corresponds to.
+    let audioAnchor = 0;
+    // Pre-fetched follow-on window, so the sound does not stop at the seam.
+    let nextAudio = null;
+    let nextAnchor = 0;
+    let nextReady = false;
+    let isPreparingAudio = false;
+    let playAfterPrepare = false;
     let buffering = false;
+    let audioCtx = null;
+    let vidGainNode = null;
+    let useFallbackMute = false;
+    // Bumped on every (re)request so a late response cannot overwrite a newer one.
+    let audioRequestId = 0;
     let seekDebounceTimer = null;
-    let suppressNextSeekedEvent = false;
 
-    function buildVideoTrackUrl(streamIndex, atTime) {
+    function buildAudioUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
       const pathParts = u.pathname.split('/').filter(Boolean);
-      u.pathname = '/video-track/' + streamIndex + '/' + pathParts.join('/');
-      u.searchParams.set('t', String(Math.max(0, atTime || 0)));
+      u.pathname = '/audio/' + streamIndex + '/' + pathParts.join('/');
+      u.searchParams.set('t', Math.max(0, atTime || 0).toFixed(3));
       return u.toString();
     }
-
     function buildTracksUrl() {
       const u = new URL(STREAM_URL, window.location.origin);
       const pathParts = u.pathname.split('/').filter(Boolean);
@@ -231,7 +271,6 @@
       mal:'Malayalam', ml:'Malayalam', kan:'Kannada', kn:'Kannada',
       ben:'Bengali', bn:'Bengali', pan:'Punjabi', pa:'Punjabi'
     };
-
     function trackLabel(track, idx) {
       const meta = track.tags || {};
       const lang = (meta.language || '').toLowerCase();
@@ -241,10 +280,7 @@
       if (title && title.length < 40) label += ' — ' + title;
       return label;
     }
-
-    function getVideo() {
-      return document.querySelector('#player');
-    }
+    function getVideo() { return document.querySelector('#player'); }
 
     function showLoadingUI(show, text) {
       const el = document.getElementById('mediaLoadingUI');
@@ -259,127 +295,214 @@
         if (plyrEl) plyrEl.classList.remove('controls-locked');
       }
     }
-
     function updateLoadingUI() {
-      if (isPreparing) {
-        showLoadingUI(true, 'Preparing…');
-        return;
-      }
-      if (buffering) {
-        showLoadingUI(true, 'Loading…');
-        return;
-      }
+      if (isPreparingAudio) { showLoadingUI(true, 'Preparing audio…'); return; }
+      if (buffering) { showLoadingUI(true, 'Loading…'); return; }
       showLoadingUI(false);
     }
-
+    // ponytail: the overlay covers the player and eats clicks, so one pause is
+    // enough. The old 100 ms "force pause" timer is what made the picture jerk
+    // back and forth a few frames on every track switch.
     function setPreparing(on) {
-      isPreparing = on;
+      isPreparingAudio = on;
+      const plyrEl = document.querySelector('.plyr');
+      if (plyrEl) plyrEl.classList.toggle('seek-blocked', on);
       updateLoadingUI();
+    }
+
+    function initAudioContext(vid) {
+      if (!vid) return;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { useFallbackMute = true; return; }
+      try {
+        if (!audioCtx) audioCtx = new AC();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        if (!vid.__audioConnected) {
+          const src = audioCtx.createMediaElementSource(vid);
+          vidGainNode = audioCtx.createGain();
+          src.connect(vidGainNode);
+          vidGainNode.connect(audioCtx.destination);
+          vid.__audioConnected = true;
+        }
+        if (vidGainNode) vidGainNode.gain.value = (activeTrackIdx !== null) ? 0 : 1;
+      } catch (e) { useFallbackMute = true; }
+    }
+    function silenceVideo(vid) {
+      initAudioContext(vid);
+      if (useFallbackMute) { if (vid) vid.muted = true; return; }
+      if (vidGainNode) vidGainNode.gain.value = 0;
+    }
+    function restoreVideoAudio(vid) {
+      if (useFallbackMute) { if (vid) vid.muted = false; return; }
+      if (vidGainNode) vidGainNode.gain.value = 1;
+    }
+    function killAudioEl(el) {
+      if (!el) return;
+      try {
+        el.pause();
+        el.removeAttribute('src');
+        el.load();
+        el.remove();
+      } catch (e) {}
+    }
+    function destroyAudio() { killAudioEl(activeAudio); activeAudio = null; }
+    // The window running out IS the seam. Acting on the element's own 'ended'
+    // event lands it at exactly the right movie time and keeps working in a
+    // background tab, where requestAnimationFrame is stopped completely.
+    function activate(el, anchor) {
+      activeAudio = el;
+      audioAnchor = anchor;
+      el.addEventListener('ended', function () {
+        if (el !== activeAudio || activeTrackIdx === null || isPreparingAudio) return;
+        if (nextReady) promoteNext();
+        else requestAudio(activeTrackIdx, getVideo().currentTime);
+      }, { once: true });
+    }
+    function dropNext() { killAudioEl(nextAudio); nextAudio = null; nextAnchor = 0; nextReady = false; }
+    function syncVolume() {
+      if (!player) return;
+      if (activeAudio) { activeAudio.volume = player.volume; activeAudio.muted = player.muted; }
+      if (nextAudio) { nextAudio.volume = player.volume; nextAudio.muted = player.muted; }
+    }
+    function newAudioEl() {
+      const el = document.createElement('audio');
+      el.preload = 'auto';
+      el.style.display = 'none';
+      if ('preservesPitch' in el) el.preservesPitch = true;
+      if ('webkitPreservesPitch' in el) el.webkitPreservesPitch = true;
+      document.body.appendChild(el);
+      return el;
+    }
+    // Movie time where the loaded window ends.
+    // Do NOT use activeAudio.duration here. On a raw ADTS stream the browser
+    // estimates duration from the bitrate: a measured 30.0 s window was
+    // reported as 41.4 s. The nominal length is what the server guarantees
+    // with -t, and it is accurate to a few ms.
+    function windowEnd() { return audioAnchor + AUDIO_WINDOW_SECONDS; }
+
+    // Ask the server for `streamIndex` starting at exactly `atTime`. Used when
+    // picking a language, after a seek, and when drift grows too large.
+    function requestAudio(streamIndex, atTime) {
+      const vid = getVideo();
+      if (!vid) return;
+      if (seekDebounceTimer) { clearTimeout(seekDebounceTimer); seekDebounceTimer = null; }
+
+      const anchor = Math.max(0, (atTime != null) ? atTime : (vid.currentTime || 0));
+      const myId = ++audioRequestId;
+      const wasPlaying = !vid.paused;
+
+      initAudioContext(vid);
+      // Pause once. The video must not move while the server prepares, or the
+      // audio we asked for no longer matches where the picture is.
+      if (wasPlaying) vid.pause();
+      dropNext();
+      destroyAudio();
+      activeTrackIdx = streamIndex;
+      audioAnchor = anchor;
+      playAfterPrepare = false;
+      silenceVideo(vid);
+      setPreparing(true);
+      markActiveChip(streamIndex);
+
+      const el = newAudioEl();
+
+      el.addEventListener('error', function () {
+        if (myId !== audioRequestId) return;
+        setPreparing(false);
+        switchToDefault();
+        alert('Selected audio track failed. Switched back to default.');
+      });
+
+      el.addEventListener('canplay', function onCanPlay() {
+        el.removeEventListener('canplay', onCanPlay);
+        if (myId !== audioRequestId) { killAudioEl(el); return; }
+        activate(el, anchor);
+        syncVolume();
+        el.playbackRate = vid.playbackRate;
+        setPreparing(false);
+        if (wasPlaying || playAfterPrepare) { playAfterPrepare = false; startBoth(); }
+      }, { once: true });
+
+      el.src = buildAudioUrl(streamIndex, anchor);
+      el.load();
+    }
+
+    // The server sends one window per request, not the rest of the movie. Load
+    // the follow-on window early and swap it in at the seam.
+    function prefetchNext() {
+      if (nextAudio || activeTrackIdx === null || !activeAudio) return;
+      const anchor = windowEnd();
+      const myId = audioRequestId;
+      const el = newAudioEl();
+      nextAudio = el; nextAnchor = anchor; nextReady = false;
+      el.addEventListener('canplay', function () {
+        if (myId !== audioRequestId || el !== nextAudio) { killAudioEl(el); return; }
+        nextReady = true;
+      }, { once: true });
+      el.addEventListener('error', function () { if (el === nextAudio) dropNext(); });
+      el.src = buildAudioUrl(activeTrackIdx, anchor);
+      el.load();
+    }
+    // Called SEAM_LEAD seconds BEFORE the seam. The new element makes no sound
+    // during its startup delay, so the old window keeps playing and covers the
+    // gap. The instant the new one really starts, it takes over.
+    function promoteNext() {
+      const vid = getVideo();
+      const el = nextAudio, anchor = nextAnchor;
+      nextAudio = null; nextAnchor = 0; nextReady = false;
+      if (!el || !vid) { killAudioEl(el); return; }
+      if (player) { el.volume = player.volume; el.muted = player.muted; }
+      el.playbackRate = vid.playbackRate;
+
+      const old = activeAudio;
+      const myId = audioRequestId;
+      const t0 = performance.now();
+      function handOver() {
+        if (myId !== audioRequestId) { killAudioEl(el); return; }
+        activate(el, anchor);
+        killAudioEl(old);
+      }
+      if (vid.paused) { handOver(); return; }
+      el.play().catch(function () {});
+      (function waitForSound() {
+        if (myId !== audioRequestId) { killAudioEl(el); return; }
+        const waited = (performance.now() - t0) / 1000;
+        if (el.currentTime > 0 || waited > 1.5) { handOver(); return; }
+        setTimeout(waitForSound, 20);
+      })();
+    }
+
+    // Start the audio first, let the picture follow once sound is really
+    // coming out. The trim loop removes the few ms of start slack.
+    function startBoth() {
+      const vid = getVideo();
+      if (!activeAudio || !vid) return;
+      activeAudio.addEventListener('playing', function () {
+        vid.play().catch(function () {});
+      }, { once: true });
+      activeAudio.play().catch(function () { vid.play().catch(function () {}); });
+    }
+
+    function switchToDefault() {
+      const vid = getVideo();
+      const wasPlaying = vid && !vid.paused;
+      if (seekDebounceTimer) { clearTimeout(seekDebounceTimer); seekDebounceTimer = null; }
+      audioRequestId++; // invalidate any in-flight request for a language track
+      setPreparing(false);
+      playAfterPrepare = false;
+      dropNext();
+      destroyAudio();
+      activeTrackIdx = null;
+      audioAnchor = 0;
+      restoreVideoAudio(vid);
+      markActiveChip(null);
+      if (vid && wasPlaying) vid.play().catch(function () {});
     }
 
     function markActiveChip(streamIndex) {
       document.querySelectorAll('#audioPanel .chip').forEach(function (el) {
         el.classList.toggle('active', String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex));
       });
-    }
-
-    // Always start from 00:00:00 when changing audio track
-    function requestTrack(streamIndex) {
-      const vid = getVideo();
-      if (!vid) return;
-
-      const wasPlaying = !vid.paused;
-
-      activeTrackIdx = streamIndex;
-      wantPlayWhenReady = wasPlaying;
-      setPreparing(true);
-
-      suppressNextSeekedEvent = true;
-      vid.src = buildVideoTrackUrl(streamIndex, 0);  // always from beginning
-      vid.load();
-
-      vid.addEventListener('loadedmetadata', function onReady() {
-        vid.removeEventListener('loadedmetadata', onReady);
-        setPreparing(false);
-        markActiveChip(streamIndex);
-        if (wantPlayWhenReady) {
-          wantPlayWhenReady = false;
-          vid.play().catch(function () {});
-        }
-      }, { once: true });
-
-      vid.addEventListener('error', function onErr() {
-        vid.removeEventListener('error', onErr);
-        setPreparing(false);
-        wantPlayWhenReady = false;
-        alert('Selected audio track failed. Switched back to default.');
-        switchToDefault();
-      }, { once: true });
-    }
-
-    function switchToDefault() {
-      const vid = getVideo();
-      const wasPlaying = vid && !vid.paused;
-
-      activeTrackIdx = null;
-      wantPlayWhenReady = wasPlaying;
-      setPreparing(true);
-
-      suppressNextSeekedEvent = true;
-      vid.src = STREAM_URL;
-      vid.load();
-
-      vid.addEventListener('loadedmetadata', function onReady() {
-        vid.removeEventListener('loadedmetadata', onReady);
-        setPreparing(false);
-        markActiveChip(null);
-        if (wantPlayWhenReady) {
-          wantPlayWhenReady = false;
-          vid.play().catch(function () {});
-        }
-      }, { once: true });
-    }
-
-    // When user seeks while on non-default track
-    function onSeekWhileActive() {
-      if (activeTrackIdx === null) return;
-      if (suppressNextSeekedEvent) {
-        suppressNextSeekedEvent = false;
-        return;
-      }
-
-      if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
-      seekDebounceTimer = setTimeout(function () {
-        const vid = getVideo();
-        if (!vid || activeTrackIdx === null) return;
-
-        const newTime = vid.currentTime || 0;
-        requestTrackFromTime(activeTrackIdx, newTime);
-      }, 450);
-    }
-
-    function requestTrackFromTime(streamIndex, atTime) {
-      const vid = getVideo();
-      if (!vid) return;
-
-      const wasPlaying = !vid.paused;
-      activeTrackIdx = streamIndex;
-      wantPlayWhenReady = wasPlaying;
-      setPreparing(true);
-
-      suppressNextSeekedEvent = true;
-      vid.src = buildVideoTrackUrl(streamIndex, atTime);
-      vid.load();
-
-      vid.addEventListener('loadedmetadata', function onReady() {
-        vid.removeEventListener('loadedmetadata', onReady);
-        setPreparing(false);
-        markActiveChip(streamIndex);
-        if (wantPlayWhenReady) {
-          wantPlayWhenReady = false;
-          vid.play().catch(function () {});
-        }
-      }, { once: true });
     }
 
     function renderAudioPanel(tracks) {
@@ -395,13 +518,9 @@
         b.className = 'chip' + (idx === 0 ? ' active' : '');
         b.dataset.index = idx === 0 ? 'default' : track.index;
         b.textContent = trackLabel(track, idx);
-
         b.onclick = function () {
-          if (idx === 0) {
-            switchToDefault();
-          } else {
-            requestTrack(track.index);  // always starts from 00:00:00
-          }
+          if (idx === 0) switchToDefault();
+          else requestAudio(track.index);
         };
         panel.appendChild(b);
       });
@@ -420,14 +539,9 @@
 
     function copyLink() {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(STREAM_URL).then(function () {
-          alert('Link copied!');
-        }).catch(function () {
-          prompt('Copy this link:', STREAM_URL);
-        });
-      } else {
-        prompt('Copy this link:', STREAM_URL);
-      }
+        navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied!'); })
+          .catch(function () { prompt('Copy this link:', STREAM_URL); });
+      } else prompt('Copy this link:', STREAM_URL);
     }
 
     document.addEventListener('DOMContentLoaded', function () {
@@ -440,34 +554,100 @@
         seekTime: 10
       });
 
+      player.on('volumechange', syncVolume);
+
+      document.addEventListener('keydown', function (e) {
+        if (!isPreparingAudio) return;
+        const key = e.key.toLowerCase();
+        if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') {
+          e.preventDefault(); e.stopPropagation();
+        }
+      }, true);
+
       fetch(buildTracksUrl())
         .then(function (r) { return r.json(); })
         .then(function (tracks) {
-          if (Array.isArray(tracks) && tracks.length) {
-            renderAudioPanel(tracks);
-          }
+          if (Array.isArray(tracks) && tracks.length) renderAudioPanel(tracks);
         })
         .catch(function () {});
 
       const vid = getVideo();
-      if (vid) {
-        ['loadstart','waiting','stalled'].forEach(function (ev) {
-          vid.addEventListener(ev, function () {
-            buffering = true;
-            updateLoadingUI();
-          });
-        });
-        ['canplay','playing','loadeddata'].forEach(function (ev) {
-          vid.addEventListener(ev, function () {
-            buffering = false;
-            updateLoadingUI();
-          });
-        });
+      if (!vid) return;
 
-        vid.addEventListener('seeked', function () {
-          onSeekWhileActive();
-        });
-      }
+      ['loadstart','waiting','stalled'].forEach(function (ev) {
+        vid.addEventListener(ev, function () { buffering = true; updateLoadingUI(); });
+      });
+      ['canplay','playing','loadeddata'].forEach(function (ev) {
+        vid.addEventListener(ev, function () { buffering = false; updateLoadingUI(); });
+      });
+      // The media can already be ready by the time we get here. Without this
+      // the first 'Loading…' overlay never clears and the player stays locked.
+      buffering = vid.readyState < 3;
+      updateLoadingUI();
+
+      vid.addEventListener('play', function () {
+        if (isPreparingAudio) { playAfterPrepare = true; vid.pause(); updateLoadingUI(); }
+      });
+      vid.addEventListener('pause', function () {
+        if (activeAudio && !isPreparingAudio) activeAudio.pause();
+      });
+      // The Plyr speed menu changes the video rate only. Without this the audio
+      // keeps running at 1x and drifts away for good.
+      vid.addEventListener('ratechange', function () {
+        if (activeAudio) activeAudio.playbackRate = vid.playbackRate;
+      });
+      vid.addEventListener('seeking', function () {
+        if (activeAudio && !activeAudio.paused) activeAudio.pause();
+      });
+      // Any jump needs audio that starts at the new spot. We cannot seek the
+      // audio element, so we always fetch. Debounced, so dragging the progress
+      // bar does not fire a request per pixel.
+      vid.addEventListener('seeked', function () {
+        if (activeTrackIdx === null || isPreparingAudio) return;
+        dropNext();
+        if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
+        seekDebounceTimer = setTimeout(function () {
+          if (activeTrackIdx === null) return;
+          requestAudio(activeTrackIdx, getVideo().currentTime);
+        }, 400);
+      });
+
+      // Trim loop, 100 ms. Holds the audio while the video is paused, seeking
+      // or starved, starts the next window one SEAM_LEAD before the seam, and
+      // corrects drift with playbackRate — never with a seek.
+      setInterval(function () {
+        if (!activeAudio || isPreparingAudio) return;
+        if (vid.paused || vid.seeking || vid.readyState < 3) {
+          if (!activeAudio.paused) activeAudio.pause();
+          return;
+        }
+        if (vid.currentTime > windowEnd() - ROLLOVER_LEAD) prefetchNext();
+        if (nextReady && vid.currentTime >= nextAnchor - SEAM_LEAD) { promoteNext(); return; }
+
+        const expected = vid.currentTime - audioAnchor;
+        if (activeAudio.paused) {
+          // The window ran out and the seam swap did not happen. Fetch fresh
+          // audio rather than sitting in silence.
+          if (activeAudio.ended) { requestAudio(activeTrackIdx, vid.currentTime); return; }
+          activeAudio.play().catch(function () {});
+          return;
+        }
+        const rate = vid.playbackRate || 1;
+        const drift = activeAudio.currentTime - expected;
+        // Exposed for debugging: type __sync in the browser console.
+        window.__sync = { video: vid.currentTime, anchor: audioAnchor, drift: drift };
+
+        if (Math.abs(drift) > REFETCH_DRIFT) {
+          requestAudio(activeTrackIdx, vid.currentTime);
+          return;
+        }
+        if (Math.abs(drift) > 0.04) {
+          const lo = rate * 0.95, hi = rate * 1.05;
+          activeAudio.playbackRate = Math.min(hi, Math.max(lo, rate - drift * 0.4));
+        } else if (activeAudio.playbackRate !== rate) {
+          activeAudio.playbackRate = rate;
+        }
+      }, 100);
     });
   </script>
 </body>
