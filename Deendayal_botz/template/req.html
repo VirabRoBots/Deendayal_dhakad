@@ -68,7 +68,6 @@
     .plyr.controls-locked .plyr__control--overlaid {
       opacity: 0 !important; visibility: hidden !important; pointer-events: none !important;
     }
-    .seek-blocked .plyr__progress input { pointer-events: none; }
 
     #mediaLoadingUI {
       position: absolute; inset: 0; z-index: 9999;
@@ -192,10 +191,7 @@
     </div>
 
     <div class="note">
-      Multi-audio is supported in browser. First track switch, and jumping to a new
-      part of the video while a language is selected, may take a moment while the
-      server prepares audio for that spot. For best multi-audio experience use MX
-      Player or VLC.
+      Changing audio track will restart the video from the beginning so audio and video stay perfectly in sync.
     </div>
 
     <footer>© Deendayal Stream · For personal use only</footer>
@@ -204,41 +200,24 @@
   <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
   <script>
     const STREAM_URL = "{{file_url}}";
-    // Must match SEEK_BUCKET_SECONDS in audio_tracks.py
     const SEEK_BUCKET_SECONDS = 10;
 
     let player = null;
-    let fetchedTracks = null;
-    let activeAudio = null;
     let activeTrackIdx = null;
-    let isPreparingAudio = false;
+    let isPreparing = false;
     let wantPlayWhenReady = false;
-    let prepareWatch = null;
     let buffering = false;
-    // Bucket start (seconds) of the currently active extracted audio track.
-    let bucketStartOfActive = 0;
-    // Timestamps used to gate drift resync + ignore ghost seeks.
-    let lastResyncAt = 0;
-    let lastAudioReadyAt = 0;
-    let audioCtx = null;
-    let vidGainNode = null;
-    let useFallbackMute = false;
-
-    // Bumped every time we (re)request audio, so a slow/late response from
-    // an old request can't overwrite a newer one.
-    let audioRequestId = 0;
     let seekDebounceTimer = null;
+    let suppressNextSeekedEvent = false;
 
-    function roundToBucket(t) {
-      return Math.round(t / SEEK_BUCKET_SECONDS) * SEEK_BUCKET_SECONDS;
-    }
-    function buildAudioUrl(streamIndex, atTime) {
+    function buildVideoTrackUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
       const pathParts = u.pathname.split('/').filter(Boolean);
-      u.pathname = '/audio/' + streamIndex + '/' + pathParts.join('/');
+      u.pathname = '/video-track/' + streamIndex + '/' + pathParts.join('/');
       u.searchParams.set('t', String(Math.max(0, atTime || 0)));
       return u.toString();
     }
+
     function buildTracksUrl() {
       const u = new URL(STREAM_URL, window.location.origin);
       const pathParts = u.pathname.split('/').filter(Boolean);
@@ -252,6 +231,7 @@
       mal:'Malayalam', ml:'Malayalam', kan:'Kannada', kn:'Kannada',
       ben:'Bengali', bn:'Bengali', pan:'Punjabi', pa:'Punjabi'
     };
+
     function trackLabel(track, idx) {
       const meta = track.tags || {};
       const lang = (meta.language || '').toLowerCase();
@@ -261,7 +241,10 @@
       if (title && title.length < 40) label += ' — ' + title;
       return label;
     }
-    function getVideo() { return document.querySelector('#player'); }
+
+    function getVideo() {
+      return document.querySelector('#player');
+    }
 
     function showLoadingUI(show, text) {
       const el = document.getElementById('mediaLoadingUI');
@@ -276,179 +259,127 @@
         if (plyrEl) plyrEl.classList.remove('controls-locked');
       }
     }
+
     function updateLoadingUI() {
-      if (isPreparingAudio) { showLoadingUI(true, 'Preparing audio…'); return; }
-      if (buffering) { showLoadingUI(true, 'Loading…'); return; }
+      if (isPreparing) {
+        showLoadingUI(true, 'Preparing…');
+        return;
+      }
+      if (buffering) {
+        showLoadingUI(true, 'Loading…');
+        return;
+      }
       showLoadingUI(false);
     }
-    function forcePauseIfPreparing() {
-      if (!isPreparingAudio) return;
-      const vid = getVideo();
-      if (vid && !vid.paused) { vid.pause(); wantPlayWhenReady = true; }
-      if (player && player.playing) { player.pause(); wantPlayWhenReady = true; }
-    }
+
     function setPreparing(on) {
-      isPreparingAudio = on;
-      const plyrEl = document.querySelector('.plyr');
-      if (plyrEl) {
-        if (on) plyrEl.classList.add('seek-blocked');
-        else plyrEl.classList.remove('seek-blocked');
-      }
-      if (on) {
-        if (prepareWatch) clearInterval(prepareWatch);
-        prepareWatch = setInterval(forcePauseIfPreparing, 100);
-      } else if (prepareWatch) {
-        clearInterval(prepareWatch); prepareWatch = null;
-      }
+      isPreparing = on;
       updateLoadingUI();
-    }
-
-    function initAudioContext(vid) {
-      if (!vid) return;
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) { useFallbackMute = true; return; }
-      try {
-        if (!audioCtx) audioCtx = new AC();
-        if (audioCtx.state === 'suspended') audioCtx.resume();
-        if (!vid.__audioConnected) {
-          const src = audioCtx.createMediaElementSource(vid);
-          vidGainNode = audioCtx.createGain();
-          src.connect(vidGainNode);
-          vidGainNode.connect(audioCtx.destination);
-          vid.__audioConnected = true;
-        }
-        if (vidGainNode) vidGainNode.gain.value = (activeTrackIdx !== null) ? 0 : 1;
-      } catch (e) { useFallbackMute = true; }
-    }
-    function silenceVideo(vid) {
-      initAudioContext(vid);
-      if (useFallbackMute) { if (vid) vid.muted = true; return; }
-      if (vidGainNode) vidGainNode.gain.value = 0;
-    }
-    function restoreVideoAudio(vid) {
-      if (useFallbackMute) { if (vid) vid.muted = false; return; }
-      if (vidGainNode) vidGainNode.gain.value = 1;
-    }
-    function destroyAudio() {
-      if (!activeAudio) return;
-      try {
-        activeAudio.pause();
-        activeAudio.removeAttribute('src');
-        activeAudio.load();
-        activeAudio.remove();
-      } catch (e) {}
-      activeAudio = null;
-    }
-    function syncVolume() {
-      if (!activeAudio || !player) return;
-      activeAudio.volume = player.volume;
-      activeAudio.muted = player.muted;
-    }
-    function ensureAudioPlaying() {
-      const vid = getVideo();
-      if (!activeAudio || !vid || isPreparingAudio) return;
-      if (!vid.paused && activeAudio.paused) activeAudio.play().catch(function(){});
-      if (vid.paused && !activeAudio.paused) activeAudio.pause();
-    }
-
-    // Requests audio for `streamIndex` starting at `atTime` (defaults to the
-    // video's current position). Used both for picking a language AND for
-    // re-syncing after the user seeks while a language is already active.
-    function requestAudio(streamIndex, atTime) {
-      const vid = getVideo();
-      if (!vid) return;
-      const requestedTime = (atTime != null) ? atTime : (vid.currentTime || 0);
-      const bucketStart = roundToBucket(requestedTime);
-
-      initAudioContext(vid);
-
-      const myRequestId = ++audioRequestId;
-      const wasPlaying = !vid.paused;
-
-      if (activeAudio) { try { activeAudio.pause(); } catch (e) {} }
-      destroyAudio();
-      activeTrackIdx = streamIndex;
-      bucketStartOfActive = bucketStart;
-      silenceVideo(vid);
-      setPreparing(true);
-      wantPlayWhenReady = wasPlaying;
-
-      const audioEl = document.createElement('audio');
-      audioEl.preload = 'auto';
-      audioEl.style.display = 'none';
-      document.body.appendChild(audioEl);
-      audioEl.src = buildAudioUrl(streamIndex, bucketStart);
-
-      audioEl.addEventListener('canplay', function onCanPlay() {
-        audioEl.removeEventListener('canplay', onCanPlay);
-        if (myRequestId !== audioRequestId) {
-          // A newer request superseded this one (user seeked again fast) — drop it.
-          try { audioEl.pause(); audioEl.remove(); } catch (e) {}
-          return;
-        }
-        activeAudio = audioEl;
-        syncVolume();
-        // Video is PAUSED here, so vid.currentTime is stable and trustworthy.
-        // Compute the offset NOW (not at request time) to avoid stale correction.
-        try {
-          activeAudio.currentTime = Math.max(0, vid.currentTime - bucketStart);
-        } catch (e) {}
-        lastAudioReadyAt = Date.now();
-        setPreparing(false);
-        if (wantPlayWhenReady) {
-          wantPlayWhenReady = false;
-          // Play AUDIO first; only start the video once audio is actually
-          // producing sound. This removes the two-stream startup race.
-          activeAudio.addEventListener('playing', function () {
-            vid.play().catch(function(){});
-          }, { once: true });
-          activeAudio.play().catch(function(){ vid.play().catch(function(){}); });
-        }
-        markActiveChip(streamIndex);
-      });
-      audioEl.addEventListener('error', function () {
-        if (myRequestId !== audioRequestId) return;
-        setPreparing(false);
-        wantPlayWhenReady = false;
-        switchToDefault();
-        alert('Selected audio track failed. Switched back to default.');
-      });
-      audioEl.load();
-    }
-
-    // Called when the user seeks while a non-default language is active.
-    // Debounced so dragging the progress bar doesn't fire a request per pixel.
-    function onSeekWhileActive() {
-      if (activeTrackIdx === null) return;
-      if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
-      seekDebounceTimer = setTimeout(function () {
-        const vid = getVideo();
-        if (!vid || activeTrackIdx === null) return;
-        requestAudio(activeTrackIdx, vid.currentTime);
-      }, 450);
-    }
-
-    function switchToDefault() {
-      const vid = getVideo();
-      const wasPlaying = vid && !vid.paused;
-      // Kill any pending seek-debounce so a stale timer can't fire a ghost
-      // audio request after we've already gone back to the default track.
-      if (seekDebounceTimer) { clearTimeout(seekDebounceTimer); seekDebounceTimer = null; }
-      audioRequestId++; // invalidate any in-flight request for a language track
-      setPreparing(false);
-      wantPlayWhenReady = false;
-      destroyAudio();
-      activeTrackIdx = null;
-      bucketStartOfActive = 0;
-      restoreVideoAudio(vid);
-      markActiveChip(null);
-      if (vid && wasPlaying) vid.play().catch(function(){});
     }
 
     function markActiveChip(streamIndex) {
       document.querySelectorAll('#audioPanel .chip').forEach(function (el) {
         el.classList.toggle('active', String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex));
       });
+    }
+
+    // Always start from 00:00:00 when changing audio track
+    function requestTrack(streamIndex) {
+      const vid = getVideo();
+      if (!vid) return;
+
+      const wasPlaying = !vid.paused;
+
+      activeTrackIdx = streamIndex;
+      wantPlayWhenReady = wasPlaying;
+      setPreparing(true);
+
+      suppressNextSeekedEvent = true;
+      vid.src = buildVideoTrackUrl(streamIndex, 0);  // always from beginning
+      vid.load();
+
+      vid.addEventListener('loadedmetadata', function onReady() {
+        vid.removeEventListener('loadedmetadata', onReady);
+        setPreparing(false);
+        markActiveChip(streamIndex);
+        if (wantPlayWhenReady) {
+          wantPlayWhenReady = false;
+          vid.play().catch(function () {});
+        }
+      }, { once: true });
+
+      vid.addEventListener('error', function onErr() {
+        vid.removeEventListener('error', onErr);
+        setPreparing(false);
+        wantPlayWhenReady = false;
+        alert('Selected audio track failed. Switched back to default.');
+        switchToDefault();
+      }, { once: true });
+    }
+
+    function switchToDefault() {
+      const vid = getVideo();
+      const wasPlaying = vid && !vid.paused;
+
+      activeTrackIdx = null;
+      wantPlayWhenReady = wasPlaying;
+      setPreparing(true);
+
+      suppressNextSeekedEvent = true;
+      vid.src = STREAM_URL;
+      vid.load();
+
+      vid.addEventListener('loadedmetadata', function onReady() {
+        vid.removeEventListener('loadedmetadata', onReady);
+        setPreparing(false);
+        markActiveChip(null);
+        if (wantPlayWhenReady) {
+          wantPlayWhenReady = false;
+          vid.play().catch(function () {});
+        }
+      }, { once: true });
+    }
+
+    // When user seeks while on non-default track
+    function onSeekWhileActive() {
+      if (activeTrackIdx === null) return;
+      if (suppressNextSeekedEvent) {
+        suppressNextSeekedEvent = false;
+        return;
+      }
+
+      if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
+      seekDebounceTimer = setTimeout(function () {
+        const vid = getVideo();
+        if (!vid || activeTrackIdx === null) return;
+
+        const newTime = vid.currentTime || 0;
+        requestTrackFromTime(activeTrackIdx, newTime);
+      }, 450);
+    }
+
+    function requestTrackFromTime(streamIndex, atTime) {
+      const vid = getVideo();
+      if (!vid) return;
+
+      const wasPlaying = !vid.paused;
+      activeTrackIdx = streamIndex;
+      wantPlayWhenReady = wasPlaying;
+      setPreparing(true);
+
+      suppressNextSeekedEvent = true;
+      vid.src = buildVideoTrackUrl(streamIndex, atTime);
+      vid.load();
+
+      vid.addEventListener('loadedmetadata', function onReady() {
+        vid.removeEventListener('loadedmetadata', onReady);
+        setPreparing(false);
+        markActiveChip(streamIndex);
+        if (wantPlayWhenReady) {
+          wantPlayWhenReady = false;
+          vid.play().catch(function () {});
+        }
+      }, { once: true });
     }
 
     function renderAudioPanel(tracks) {
@@ -464,9 +395,13 @@
         b.className = 'chip' + (idx === 0 ? ' active' : '');
         b.dataset.index = idx === 0 ? 'default' : track.index;
         b.textContent = trackLabel(track, idx);
+
         b.onclick = function () {
-          if (idx === 0) switchToDefault();
-          else requestAudio(track.index);
+          if (idx === 0) {
+            switchToDefault();
+          } else {
+            requestTrack(track.index);  // always starts from 00:00:00
+          }
         };
         panel.appendChild(b);
       });
@@ -485,9 +420,14 @@
 
     function copyLink() {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied!'); })
-          .catch(function () { prompt('Copy this link:', STREAM_URL); });
-      } else prompt('Copy this link:', STREAM_URL);
+        navigator.clipboard.writeText(STREAM_URL).then(function () {
+          alert('Link copied!');
+        }).catch(function () {
+          prompt('Copy this link:', STREAM_URL);
+        });
+      } else {
+        prompt('Copy this link:', STREAM_URL);
+      }
     }
 
     document.addEventListener('DOMContentLoaded', function () {
@@ -500,32 +440,10 @@
         seekTime: 10
       });
 
-      player.on('volumechange', syncVolume);
-      player.on('play', function () {
-        if (isPreparingAudio) {
-          player.pause();
-          const vid = getVideo();
-          if (vid) vid.pause();
-          wantPlayWhenReady = true;
-          updateLoadingUI();
-          return;
-        }
-        ensureAudioPlaying();
-      });
-
-      document.addEventListener('keydown', function (e) {
-        if (!isPreparingAudio) return;
-        const key = e.key.toLowerCase();
-        if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') {
-          e.preventDefault(); e.stopPropagation();
-        }
-      }, true);
-
       fetch(buildTracksUrl())
         .then(function (r) { return r.json(); })
         .then(function (tracks) {
           if (Array.isArray(tracks) && tracks.length) {
-            fetchedTracks = tracks;
             renderAudioPanel(tracks);
           }
         })
@@ -534,43 +452,21 @@
       const vid = getVideo();
       if (vid) {
         ['loadstart','waiting','stalled'].forEach(function (ev) {
-          vid.addEventListener(ev, function () { buffering = true; updateLoadingUI(); });
+          vid.addEventListener(ev, function () {
+            buffering = true;
+            updateLoadingUI();
+          });
         });
         ['canplay','playing','loadeddata'].forEach(function (ev) {
-          vid.addEventListener(ev, function () { buffering = false; updateLoadingUI(); });
-        });
-        vid.addEventListener('play', function () {
-          if (isPreparingAudio) {
-            vid.pause(); wantPlayWhenReady = true; updateLoadingUI();
-          }
-        });
-        // User jumped to a new spot (dragged progress bar, tapped ahead, etc).
-        vid.addEventListener('seeked', function () {
-          // Ignore tiny auto-seeks fired right after an audio track becomes
-          // ready — they'd cause a pointless re-extraction.
-          if (Date.now() - lastAudioReadyAt < 300) return;
-          onSeekWhileActive();
-        });
-        vid.addEventListener('pause', function () {
-          if (activeAudio && !isPreparingAudio) activeAudio.pause();
+          vid.addEventListener(ev, function () {
+            buffering = false;
+            updateLoadingUI();
+          });
         });
 
-        // Drift watchdog: while a language track is active, compare the two
-        // clocks every 500ms. If they diverge by more than 250ms, snap the
-        // audio back to the video position. This is what keeps long playback
-        // (and approximate server-side -ss seeking) from drifting out of sync.
-        setInterval(function () {
-          const vid = getVideo();
-          if (!activeAudio || isPreparingAudio || !vid || vid.paused || activeAudio.paused) return;
-          const now = Date.now();
-          if (now - lastResyncAt < 1000) return; // at most one nudge per second
-          const expected = vid.currentTime - bucketStartOfActive;
-          const drift = activeAudio.currentTime - expected;
-          if (Math.abs(drift) > 0.25) {
-            lastResyncAt = now;
-            try { activeAudio.currentTime = expected; } catch (e) {}
-          }
-        }, 500);
+        vid.addEventListener('seeked', function () {
+          onSeekWhileActive();
+        });
       }
     });
   </script>
