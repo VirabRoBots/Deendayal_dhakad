@@ -30,8 +30,9 @@ CACHE_MAX_AGE_SECONDS = 12 * 60 * 60
 CACHE_MIN_FREE_BYTES = 1 * 1024 ** 3
 SEEK_BUCKET_SECONDS = 10
 
-# Codecs we can stream-copy into ADTS without re-encoding
+# Codecs ffmpeg can stream-copy without re-encoding
 COPYABLE_AUDIO = {"aac", "mp4a"}
+COPYABLE_VIDEO = {"h264", "hevc", "h265", "vp9", "av1"}
 
 
 def _round_start(start_time: float) -> int:
@@ -41,7 +42,7 @@ def _round_start(start_time: float) -> int:
 
 
 def _meta(msg_id: int) -> dict:
-    return _file_cache.setdefault(msg_id, {"tracks": None})
+    return _file_cache.setdefault(msg_id, {"tracks": None, "video_codec": None})
 
 
 async def _get_file_id(msg_id: int, secure_hash: str):
@@ -74,6 +75,8 @@ def _codec_for_stream(msg_id: int, stream_index: int) -> str:
 
 
 async def get_tracks(msg_id: int, secure_hash: str) -> list:
+    """Lists audio tracks (index/codec/language/title) so the frontend
+    can build the language picker."""
     entry = _meta(msg_id)
     if entry["tracks"] is not None:
         return entry["tracks"]
@@ -107,51 +110,93 @@ async def get_tracks(msg_id: int, secure_hash: str) -> list:
                 }
             })
     except Exception as e:
-        logging.error(f"[AudioTracks] ffprobe parse failed: {e} | stderr={stderr[:300]!r}")
+        logging.error(f"[Tracks] ffprobe parse failed: {e} | stderr={stderr[:300]!r}")
         tracks = []
 
     entry["tracks"] = tracks
     return tracks
 
 
-def _cached_audio_path(msg_id: int, stream_index: int, bucket_start: int) -> Path:
+async def get_video_codec(msg_id: int, secure_hash: str) -> str:
+    """Cheap ffprobe for just the video stream's codec, cached per file.
+    Used to decide whether the video can be stream-copied (fast) or
+    needs re-encoding when muxing a non-default audio track."""
+    entry = _meta(msg_id)
+    if entry.get("video_codec") is not None:
+        return entry["video_codec"]
+
+    await _get_file_id(msg_id, secure_hash)
+    internal_url = _internal_stream_url(msg_id, secure_hash)
+
+    process = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "quiet", "-print_format", "json",
+        "-show_streams", "-select_streams", "v",
+        "-timeout", "15000000",
+        "-i", internal_url,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+
+    codec = ""
+    try:
+        data = json.loads(stdout)
+        streams = data.get("streams", [])
+        if streams:
+            codec = (streams[0].get("codec_name") or "").lower()
+    except Exception as e:
+        logging.error(f"[VideoTrack] ffprobe video codec failed: {e} | stderr={stderr[:300]!r}")
+
+    entry["video_codec"] = codec
+    return codec
+
+
+def _cached_mux_path(msg_id: int, stream_index: int, bucket_start: int) -> Path:
     if bucket_start <= 0:
-        return TEMP_DIR / f"{msg_id}_track{stream_index}.aac"
-    return TEMP_DIR / f"{msg_id}_track{stream_index}_seek{bucket_start}.aac"
+        return TEMP_DIR / f"{msg_id}_mux{stream_index}.mp4"
+    return TEMP_DIR / f"{msg_id}_mux{stream_index}_seek{bucket_start}.mp4"
 
 
-async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int, start_time: float = 0.0):
+async def extract_muxed_stream(msg_id: int, secure_hash: str, stream_index: int, start_time: float = 0.0):
     """
-    Stream audio from start_time (bucketed).
-    ffmpeg fetches the source itself over HTTP (Range-capable), so seeking
-    to any point costs roughly the same regardless of how far into the
-    file it is — we're no longer downloading everything before that point.
-    If the track is already AAC → stream copy (fast). Otherwise → encode.
+    Muxes VIDEO + the selected audio track together into one fragmented-MP4
+    file starting at start_time (bucketed to SEEK_BUCKET_SECONDS). Both
+    tracks come from the same ffmpeg process and share one output timeline,
+    so there's no audio/video drift the way there would be with two
+    separately-synced elements.
+
+    If both video and the chosen audio track are stream-copyable, this is
+    cheap (no re-encode) — same cost class as your old audio-only extraction.
     """
     bucket_start = _round_start(start_time)
-    cache_path = _cached_audio_path(msg_id, stream_index, bucket_start)
+    cache_path = _cached_mux_path(msg_id, stream_index, bucket_start)
     if cache_path.exists():
         return _stream_from_cached_file(cache_path)
 
-    key = (msg_id, stream_index, bucket_start)
+    key = ("mux", msg_id, stream_index, bucket_start)
 
     existing = _inflight.get(key)
     if existing is not None:
         return _stream_from_inflight(existing)
 
-    # Ensure we know codec (for copy vs encode)
     entry = _meta(msg_id)
     if entry.get("tracks") is None:
         try:
             await get_tracks(msg_id, secure_hash)
         except Exception as e:
-            logging.warning(f"[AudioTracks] get_tracks before extract failed: {e}")
+            logging.warning(f"[VideoTrack] get_tracks before mux failed: {e}")
 
-    codec = _codec_for_stream(msg_id, stream_index)
-    use_copy = codec in COPYABLE_AUDIO
+    audio_codec = _codec_for_stream(msg_id, stream_index)
+    video_codec = await get_video_codec(msg_id, secure_hash)
+
+    audio_copy = audio_codec in COPYABLE_AUDIO
+    video_copy = video_codec in COPYABLE_VIDEO
+
     logging.info(
-        f"[AudioTracks] extract msg={msg_id} stream={stream_index} "
-        f"codec={codec or 'unknown'} mode={'copy' if use_copy else 'encode'} "
+        f"[VideoTrack] mux msg={msg_id} stream={stream_index} "
+        f"vcodec={video_codec or 'unknown'}({'copy' if video_copy else 'encode'}) "
+        f"acodec={audio_codec or 'unknown'}({'copy' if audio_copy else 'encode'}) "
         f"start={bucket_start}s"
     )
 
@@ -166,7 +211,7 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
             return _stream_from_inflight(existing)
 
         internal_url = _internal_stream_url(msg_id, secure_hash)
-        tmp_out = cache_path.with_suffix(".part.aac")
+        tmp_out = cache_path.with_suffix(".part.mp4")
 
         cmd = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-nostdin",
@@ -176,22 +221,30 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
         ]
         if bucket_start > 0:
             # -ss BEFORE -i: ffmpeg seeks in the source before decoding,
-            # which is what lets it skip straight to this byte offset
-            # instead of decoding everything from the start.
+            # letting it jump near this byte offset instead of decoding
+            # everything from the start.
             cmd += ["-ss", str(bucket_start)]
 
         cmd += [
             "-probesize", "2M", "-analyzeduration", "2M",
             "-i", internal_url,
+            "-map", "0:v:0",
             "-map", f"0:{stream_index}",
         ]
 
-        if use_copy:
-            cmd += ["-c:a", "copy", "-f", "adts"]
-        else:
-            cmd += ["-c:a", "aac", "-b:a", "96k", "-ac", "2", "-threads", "0", "-f", "adts"]
+        cmd += ["-c:v", "copy" if video_copy else "libx264"]
+        if not video_copy:
+            cmd += ["-preset", "veryfast", "-crf", "23"]
 
-        cmd += [str(tmp_out)]
+        cmd += ["-c:a", "copy" if audio_copy else "aac"]
+        if not audio_copy:
+            cmd += ["-b:a", "128k"]
+
+        cmd += [
+            "-f", "mp4",
+            "-movflags", "frag_keyframe+empty_moov+faststart",
+            str(tmp_out),
+        ]
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -217,10 +270,10 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
                     tmp_out.rename(cache_path)
                     job["ok"] = True
                 except Exception as e:
-                    logging.error(f"[AudioTracks] cache rename failed: {e}")
+                    logging.error(f"[VideoTrack] cache rename failed: {e}")
                     job["ok"] = False
             else:
-                logging.error(f"[AudioTracks] ffmpeg extraction failed: {stderr[:300]!r}")
+                logging.error(f"[VideoTrack] ffmpeg mux failed: {stderr[:300]!r}")
                 try:
                     if tmp_out.exists():
                         tmp_out.unlink()
@@ -236,7 +289,11 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
 
 
 def cancel_inflight(msg_id: int, stream_index: int, start_time: float = None):
-    for (m, s, b), job in list(_inflight.items()):
+    for k, job in list(_inflight.items()):
+        if len(k) == 4:
+            _, m, s, b = k  # mux key
+        else:
+            m, s, b = k
         if m != msg_id or s != stream_index:
             continue
         if start_time is not None and b != _round_start(start_time):
@@ -272,9 +329,9 @@ def _stream_from_inflight(job: dict):
                     break
                 await asyncio.sleep(0.15)
         except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
-            logging.info("[AudioTracks] client disconnected mid-stream (live extraction)")
+            logging.info("[VideoTrack] client disconnected mid-stream (live extraction)")
         except Exception as e:
-            logging.error(f"[AudioTracks] live-stream read error: {e}")
+            logging.error(f"[VideoTrack] live-stream read error: {e}")
 
     return generator()
 
@@ -290,9 +347,9 @@ def _stream_from_cached_file(path: Path):
                     yield chunk
                     await asyncio.sleep(0)
         except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
-            logging.info(f"[AudioTracks] client disconnected mid-stream: {path.name}")
+            logging.info(f"[VideoTrack] client disconnected mid-stream: {path.name}")
         except Exception as e:
-            logging.error(f"[AudioTracks] read error on {path.name}: {e}")
+            logging.error(f"[VideoTrack] read error on {path.name}: {e}")
     return generator()
 
 
@@ -326,5 +383,5 @@ async def start_cache_cleanup_loop(interval_seconds: int = 3600):
         try:
             await cleanup_audio_cache()
         except Exception as e:
-            logging.error(f"[AudioTracks] cleanup loop error: {e}")
+            logging.error(f"[VideoTrack] cleanup loop error: {e}")
         await asyncio.sleep(interval_seconds)
