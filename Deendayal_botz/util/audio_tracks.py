@@ -28,16 +28,37 @@ _inflight = {}
 
 CACHE_MAX_AGE_SECONDS = 12 * 60 * 60
 CACHE_MIN_FREE_BYTES = 1 * 1024 ** 3
-SEEK_BUCKET_SECONDS = 10
 
-# Codecs we can stream-copy into ADTS without re-encoding
+# MUST match AUDIO_WINDOW_SECONDS in the player page.
+AUDIO_WINDOW_SECONDS = 600
+
+# There is no seek bucket any more. The browser cannot seek inside this
+# response: it is chunked, it has no Content-Length and it cannot serve Range,
+# so Chrome reports seekable = [0,0] and any currentTime write resets the
+# element to zero. The player therefore plays every window from 0 and asks us
+# to start at the EXACT position it needs. Rounding the start would put the
+# audio out of step by exactly the rounding error.
+
+# Slack for the accurate trim below. ffmpeg's input -ss lands on the nearest
+# cluster BEFORE the requested time, and an mkv cluster can be several seconds
+# long. We seek this far early on the input, then trim the slack off on the
+# output side, where the cut is exact to one AAC frame (~21 ms).
+SEEK_PAD_SECONDS = 10
+
+# Codecs we can stream-copy into ADTS without re-encoding.
 COPYABLE_AUDIO = {"aac", "mp4a"}
 
+# Set True if your ffmpeg is old and output-side -ss does not trim a stream
+# copy. Re-encoding is always accurate, it only costs CPU.
+FORCE_ENCODE = False
 
-def _round_start(start_time: float) -> int:
+
+def _round_start(start_time: float) -> float:
+    """Keep the exact position. Millisecond resolution is enough to key the
+    cache and is far below what anyone can hear."""
     if not start_time or start_time < 0:
-        return 0
-    return int(round(start_time / SEEK_BUCKET_SECONDS) * SEEK_BUCKET_SECONDS)
+        return 0.0
+    return round(float(start_time), 3)
 
 
 def _meta(msg_id: int) -> dict:
@@ -115,18 +136,60 @@ async def get_tracks(msg_id: int, secure_hash: str) -> list:
 
 
 def _cached_audio_path(msg_id: int, stream_index: int, bucket_start: int) -> Path:
-    if bucket_start <= 0:
-        return TEMP_DIR / f"{msg_id}_track{stream_index}.aac"
-    return TEMP_DIR / f"{msg_id}_track{stream_index}_seek{bucket_start}.aac"
+    # The window length is part of the name: files made by the old build
+    # (extracted to the end of the movie) must not be served as a window.
+    return TEMP_DIR / f"{msg_id}_t{stream_index}_s{bucket_start:.3f}_w{AUDIO_WINDOW_SECONDS}.aac"
+
+
+def _build_ffmpeg_cmd(internal_url: str, stream_index: int, bucket_start: float,
+                      use_copy: bool, out_path: Path) -> list:
+    """One command shape for both codecs.
+
+    -ss before -i  : fast seek, but it lands on the cluster before the target
+                     and, on a stream copy, KEEPS everything from there on.
+    -ss after  -i  : exact trim, at AAC frame granularity.
+    Using both gives a fast seek AND an exact start. Measured error: under
+    20 ms, against up to 9 s for the plain -ss-before-only stream copy.
+    """
+    pad = min(bucket_start, float(SEEK_PAD_SECONDS))
+    input_ss = bucket_start - pad
+
+    cmd = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-nostdin",
+        "-seekable", "1",
+        "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2",
+        "-timeout", "15000000",
+    ]
+    if input_ss > 0:
+        cmd += ["-ss", f"{input_ss:.3f}"]
+
+    cmd += [
+        "-probesize", "2M", "-analyzeduration", "2M",
+        "-i", internal_url,
+        "-map", f"0:{stream_index}",
+    ]
+    if pad > 0:
+        cmd += ["-ss", f"{pad:.3f}"]
+
+    # Without -t, ffmpeg extracts from here to the END of the movie. That is
+    # ~80 MB and minutes of work for a single track switch.
+    cmd += ["-t", str(AUDIO_WINDOW_SECONDS)]
+
+    if use_copy:
+        cmd += ["-c:a", "copy"]
+    else:
+        cmd += ["-c:a", "aac", "-b:a", "128k", "-ac", "2", "-threads", "0"]
+
+    cmd += ["-f", "adts", str(out_path)]
+    return cmd
 
 
 async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int, start_time: float = 0.0):
     """
-    Stream audio from start_time (bucketed).
+    Stream AUDIO_WINDOW_SECONDS of audio starting exactly at start_time.
     ffmpeg fetches the source itself over HTTP (Range-capable), so seeking
     to any point costs roughly the same regardless of how far into the
-    file it is — we're no longer downloading everything before that point.
-    If the track is already AAC → stream copy (fast). Otherwise → encode.
+    file it is. The player asks for the next window before this one ends.
     """
     bucket_start = _round_start(start_time)
     cache_path = _cached_audio_path(msg_id, stream_index, bucket_start)
@@ -148,11 +211,11 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
             logging.warning(f"[AudioTracks] get_tracks before extract failed: {e}")
 
     codec = _codec_for_stream(msg_id, stream_index)
-    use_copy = codec in COPYABLE_AUDIO
+    use_copy = (not FORCE_ENCODE) and codec in COPYABLE_AUDIO
     logging.info(
         f"[AudioTracks] extract msg={msg_id} stream={stream_index} "
         f"codec={codec or 'unknown'} mode={'copy' if use_copy else 'encode'} "
-        f"start={bucket_start}s"
+        f"start={bucket_start:.3f}s window={AUDIO_WINDOW_SECONDS}s"
     )
 
     await _get_file_id(msg_id, secure_hash)
@@ -167,31 +230,7 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
 
         internal_url = _internal_stream_url(msg_id, secure_hash)
         tmp_out = cache_path.with_suffix(".part.aac")
-
-        cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-nostdin",
-            "-seekable", "1",
-            "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2",
-            "-timeout", "15000000",
-        ]
-        if bucket_start > 0:
-            # -ss BEFORE -i: ffmpeg seeks in the source before decoding,
-            # which is what lets it skip straight to this byte offset
-            # instead of decoding everything from the start.
-            cmd += ["-ss", str(bucket_start)]
-
-        cmd += [
-            "-probesize", "2M", "-analyzeduration", "2M",
-            "-i", internal_url,
-            "-map", f"0:{stream_index}",
-        ]
-
-        if use_copy:
-            cmd += ["-c:a", "copy", "-f", "adts"]
-        else:
-            cmd += ["-c:a", "aac", "-b:a", "96k", "-ac", "2", "-threads", "0", "-f", "adts"]
-
-        cmd += [str(tmp_out)]
+        cmd = _build_ffmpeg_cmd(internal_url, stream_index, bucket_start, use_copy, tmp_out)
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
