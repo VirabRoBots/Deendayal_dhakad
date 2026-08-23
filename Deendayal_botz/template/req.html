@@ -3,21 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Deendayal | {{file_name}}</title>
+  <title>Cinemaniacs Hub | {{file_name}}</title>
   <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --cyan: #00f5d4;
-      --violet: #9d6fff;
-      --violet2: #7c3aed;
-      --bg0: #04040f;
-      --bg1: #08081a;
+      --ember: #e33d3d;
+      --ember-dim: rgba(227,61,61,.14);
+      --ember-border: rgba(227,61,61,.35);
+      --bg0: #0a0605;
       --glass: rgba(255,255,255,0.05);
       --border: rgba(255,255,255,0.09);
-      --text: #f1f5f9;
-      --muted: #94a3b8;
+      --text: #f7f5f4;
+      --muted: #a89f9c;
+      --green: #00e676;
       --r: 16px;
       --font-head: 'Space Grotesk', sans-serif;
       --font-body: 'DM Sans', sans-serif;
@@ -33,133 +33,163 @@
       content: '';
       position: fixed; inset: 0;
       background:
-        radial-gradient(ellipse 70% 50% at 15% 5%, rgba(157,111,255,.18) 0%, transparent 55%),
-        radial-gradient(ellipse 60% 45% at 85% 90%, rgba(0,245,212,.12) 0%, transparent 55%);
+        radial-gradient(ellipse 70% 50% at 15% 5%, rgba(227,61,61,.16) 0%, transparent 55%),
+        radial-gradient(ellipse 60% 45% at 85% 90%, rgba(180,30,30,.12) 0%, transparent 55%);
       pointer-events: none; z-index: 0;
+      animation: bgPulse 8s ease-in-out infinite alternate;
     }
+    @keyframes bgPulse { from { opacity: .8; } to { opacity: 1.2; } }
     .wrap { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 16px; }
 
+    /* ---------- Header ---------- */
     header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 14px 0 18px;
+      padding: 8px 16px 22px; gap: 12px;
     }
-    .brand {
-      font-family: var(--font-head); font-weight: 700; font-size: 1.25rem;
-      background: linear-gradient(90deg, var(--cyan), var(--violet));
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      text-decoration: none;
+    .logo-container { position: relative; display: flex; align-items: center; height: 46px; }
+    .logo-circle {
+      position: absolute; right: -22px; width: 40px; height: 40px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--ember), #7a1f1f); opacity: 0.9;
     }
-    .live {
-      font-size: 0.75rem; color: var(--cyan);
-      border: 1px solid rgba(0,245,212,.35);
-      padding: 4px 10px; border-radius: 99px;
+    .logo-text { font-family: var(--font-head); font-size: 1.2rem; font-weight: 700; color: var(--text); position: relative; z-index: 3; }
+    .live-badge {
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(0, 230, 118, 0.1); border: 1px solid rgba(0, 230, 118, 0.35);
+      border-radius: 20px; padding: 5px 12px; font-size: 0.7rem; font-weight: 800;
+      color: var(--green); letter-spacing: 1.5px; text-transform: uppercase;
     }
+    .live-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; animation: pulseDot 1.4s ease infinite; }
+    @keyframes pulseDot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(.65); } }
 
+    /* ---------- Player ---------- */
     .player-box {
-      position: relative;
-      border-radius: var(--r);
-      overflow: hidden;
-      background: #000;
-      box-shadow: 0 20px 50px rgba(0,0,0,.45);
-      border: 1px solid var(--border);
+      position: relative; border-radius: var(--r); overflow: hidden; background: #000;
+      box-shadow: 0 20px 50px rgba(0,0,0,.45); border: 1px solid var(--border);
     }
-    .plyr { --plyr-color-main: var(--violet2); }
+    .plyr { --plyr-color-main: var(--ember); }
     .plyr.controls-locked .plyr__controls,
-    .plyr.controls-locked .plyr__control--overlaid {
-      opacity: 0 !important; visibility: hidden !important; pointer-events: none !important;
-    }
+    .plyr.controls-locked .plyr__control--overlaid { opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
     .seek-blocked .plyr__progress input { pointer-events: none; }
+    .plyr__progress input[type=range] { height: 6px; }
+    .plyr--full-ui input[type=range]::-webkit-slider-thumb { transition: transform .15s ease; }
+    .plyr__progress:hover input[type=range]::-webkit-slider-thumb { transform: scale(1.3); }
+    .plyr__time--current { margin-left: 6px; }
+    .plyr__time--duration { display: inline-flex !important; }
+    .time-sep { color: var(--muted); margin: 0 4px; font-size: .85rem; }
 
     #mediaLoadingUI {
-      position: absolute; inset: 0; z-index: 9999;
-      background: rgba(4,4,15,.9);
-      display: none; align-items: center; justify-content: center;
-      flex-direction: column; gap: 14px; pointer-events: all;
+      position: absolute; inset: 0; z-index: 9999; background: rgba(10,6,5,.9);
+      display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px; pointer-events: all;
     }
     #mediaLoadingUI.show { display: flex; }
-    .load-ring {
-      width: 46px; height: 46px; border-radius: 50%;
-      border: 3px solid rgba(255,255,255,.12);
-      border-top-color: var(--cyan);
-      animation: spin .85s linear infinite;
-    }
+    .load-ring { width: 46px; height: 46px; border-radius: 50%; border: 3px solid rgba(255,255,255,.12); border-top-color: var(--ember); animation: spin .85s linear infinite; }
     .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; letter-spacing: .5px; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    .file-card {
-      margin-top: 16px;
-      background: var(--glass);
-      border: 1px solid var(--border);
-      border-radius: var(--r);
-      padding: 16px 18px;
-      backdrop-filter: blur(10px);
-    }
-    .file-title {
-      font-family: var(--font-head); font-weight: 600; font-size: 1rem;
-      line-height: 1.4; word-break: break-word; margin-bottom: 6px;
-    }
+    /* ---------- File card ---------- */
+    .file-card { margin-top: 16px; background: var(--glass); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; backdrop-filter: blur(10px); }
+    .file-title { font-family: var(--font-head); font-weight: 600; font-size: 1rem; line-height: 1.4; word-break: break-word; margin-bottom: 6px; }
     .file-meta { color: var(--muted); font-size: .85rem; }
 
-    .media-bar {
-      margin-top: 14px;
-      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
-      background: var(--glass); border: 1px solid var(--border);
-      border-radius: 14px; padding: 12px 14px;
+    /* ---------- Like / Dislike / Report ---------- */
+    .feedback-bar { margin-top: 14px; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; }
+    .feedback-row { display: flex; gap: 10px; align-items: center; }
+    .fb-btn {
+      display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: rgba(255,255,255,.04);
+      color: var(--text); border-radius: 99px; padding: 8px 16px; font-size: .85rem; font-weight: 600; cursor: pointer; transition: .15s ease;
     }
-    .media-bar .label {
-      font-size: .8rem; color: var(--muted); font-weight: 600;
-      letter-spacing: .4px; margin-right: 4px;
-    }
-    .chip {
-      border: 1px solid var(--border); background: rgba(255,255,255,.04);
-      color: var(--text); border-radius: 99px; padding: 8px 14px;
-      font-size: .82rem; font-weight: 500; cursor: pointer;
-      transition: .15s ease;
-    }
-    .chip:hover { border-color: rgba(157,111,255,.45); background: rgba(157,111,255,.12); }
-    .chip.active {
-      border-color: var(--violet); color: #fff;
-      background: linear-gradient(135deg, rgba(124,58,237,.45), rgba(0,245,212,.15));
-    }
-    #audioPanel { display: none; width: 100%; margin-top: 8px; }
-    #audioPanel.show { display: flex; flex-wrap: wrap; gap: 8px; }
+    .fb-btn:hover { background: rgba(255,255,255,.08); }
+    .fb-btn.active { border-color: var(--ember); color: var(--ember); background: var(--ember-dim); }
+    .fb-btn.report { margin-left: auto; color: var(--text); }
+    .fb-btn.report:hover { color: var(--ember); border-color: var(--ember-border); }
+    .fb-btn.icon-only { padding: 8px 12px; }
 
-    .actions {
-      margin-top: 14px; display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;
+    /* ---------- Inline expand panels (shared) ---------- */
+    .inline-panel { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+    .inline-panel.open { display: block; }
+
+    /* ---------- Media bar (audio / subtitles) ---------- */
+    .media-bar { margin-top: 14px; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+    .media-buttons { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .media-bar .label { font-size: .8rem; color: var(--muted); font-weight: 600; letter-spacing: .4px; margin-right: 4px; }
+    .chip {
+      border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text);
+      border-radius: 99px; padding: 8px 14px; font-size: .82rem; font-weight: 500; cursor: pointer;
+      transition: .15s ease; display: none; align-items: center; gap: 6px;
     }
+    .chip.show { display: inline-flex; }
+    .chip:hover { border-color: var(--ember-border); background: var(--ember-dim); }
+    .chip.open { border-color: var(--ember); color: var(--ember); }
+
+    .lang-item { padding: 10px 12px; border-radius: 8px; font-size: .88rem; color: var(--text); cursor: pointer; transition: .15s ease; }
+    .lang-item:hover { background: var(--ember-dim); }
+    .lang-item.active { color: var(--ember); font-weight: 600; }
+
+    .sub-toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 4px; gap: 16px; }
+    .switch { position: relative; width: 42px; height: 24px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch-track { position: absolute; inset: 0; background: rgba(255,255,255,.15); border-radius: 99px; transition: .2s; cursor: pointer; }
+    .switch-track::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: .2s; }
+    .switch input:checked + .switch-track { background: var(--ember); }
+    .switch input:checked + .switch-track::before { transform: translateX(18px); }
+
+    /* ---------- Actions / external player ---------- */
+    .actions { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
     .btn {
-      display: flex; align-items: center; justify-content: center; gap: 8px;
-      padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
-      background: rgba(255,255,255,.04); color: var(--text);
-      text-decoration: none; font-size: .85rem; font-weight: 600; cursor: pointer;
-      transition: .15s ease;
+      display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 14px; border-radius: 12px;
+      border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text);
+      text-decoration: none; font-size: .85rem; font-weight: 600; cursor: pointer; transition: .15s ease;
     }
     .btn:hover { transform: translateY(-1px); background: rgba(255,255,255,.08); }
-    .btn.primary {
-      background: linear-gradient(135deg, var(--violet2), #a855f7);
-      border-color: transparent;
-    }
-    .btn.mx { background: linear-gradient(135deg, #1a73e8, #3b82f6); border: none; }
-    .btn.vlc { background: linear-gradient(135deg, #e65100, #ff6d00); border: none; }
-    .btn.playit { background: linear-gradient(135deg, #7c3aed, #a855f7); border: none; }
+    .btn.primary { background: linear-gradient(135deg, var(--ember), #7a1f1f); border-color: transparent; color: #fff; }
+    .btn.external { background: rgba(227,61,61,.08); border: 1px solid var(--ember-border); color: var(--text); }
+    .btn.primary.open { background: rgba(227,61,61,.12); color: var(--ember); border: 1px solid var(--ember); }
+    .btn.external.open { color: var(--ember); border-color: var(--ember); }
 
-    .note {
-      margin-top: 16px; padding: 12px 14px;
-      border-left: 3px solid var(--cyan);
-      background: rgba(0,245,212,.06); border-radius: 0 10px 10px 0;
-      color: var(--muted); font-size: .82rem; line-height: 1.5;
+    .dl-wrap { background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-top: 12px; border-top: none; padding-top: 14px; }
+    .dl-direct {
+      display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
+      padding: 12px 14px; border-radius: 10px; border: none;
+      background: linear-gradient(135deg, var(--ember), #7a1f1f); color: #fff;
+      font-size: .85rem; font-weight: 700; cursor: pointer; text-decoration: none;
+      margin-bottom: 10px;
     }
-    footer {
-      margin-top: 28px; text-align: center; color: #475569; font-size: .75rem; padding-bottom: 24px;
+    .dm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    .ext-wrap { margin-top: 14px; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+    .ext-tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+    .ext-tab { flex: 1; text-align: center; padding: 10px 0; font-size: .85rem; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+    .ext-tab.active { color: var(--ember); border-color: var(--ember); }
+    .ext-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .ext-item {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
+      background: rgba(255,255,255,.03); cursor: pointer; font-size: .82rem; font-weight: 500; color: var(--text); transition: .15s ease;
     }
+    .ext-item:hover { border-color: var(--ember-border); background: var(--ember-dim); color: var(--ember); }
+    .ext-badge { width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: .68rem; font-weight: 800; color: #fff; }
+    .ext-panel { display: none; }
+    .ext-panel.active { display: block; }
+
+    /* ---------- Report ---------- */
+    .report-wrap { margin-top: 14px; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+    .report-option { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 8px; cursor: pointer; font-size: .88rem; color: var(--text); transition: .15s ease; }
+    .report-option:hover { border-color: var(--ember-border); background: var(--ember-dim); }
+    .report-option.active { border-color: var(--ember); color: var(--ember); background: var(--ember-dim); }
+    .report-submit { margin-top: 4px; width: 100%; padding: 12px; border-radius: 10px; border: none; background: linear-gradient(135deg, var(--ember), #7a1f1f); color: #fff; font-weight: 700; font-size: .9rem; cursor: pointer; }
+
+    /* ---------- Note ---------- */
+    .note { margin-top: 16px; padding: 12px 14px; border-left: 3px solid var(--ember); background: var(--ember-dim); border-radius: 0 10px 10px 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
+    footer { margin-top: 28px; text-align: center; color: #6b5f5c; font-size: .75rem; padding-bottom: 24px; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
-      <a class="brand" href="https://t.me/Deendayal_dhakad">Deendayal Stream</a>
-      <span class="live">● LIVE</span>
+      <div class="logo-container">
+        <div class="logo-circle"></div>
+        <span class="logo-text">Cinemaniacs Hub</span>
+      </div>
+      <span class="live-badge"><span class="live-dot"></span>LIVE</span>
     </header>
 
     <div class="player-box">
@@ -177,67 +207,134 @@
       <div class="file-meta">Size: {{file_size}}</div>
     </div>
 
+    <div class="feedback-bar">
+      <div class="feedback-row">
+        <button class="fb-btn" id="btnLike" type="button"><i class="fa-solid fa-thumbs-up"></i> <span id="likeCount">0</span></button>
+        <button class="fb-btn" id="btnDislike" type="button"><i class="fa-solid fa-thumbs-down"></i> <span id="dislikeCount">0</span></button>
+        <button class="fb-btn icon-only" id="btnShare" type="button" title="Share"><i class="fa-solid fa-share-nodes"></i></button>
+        <button class="fb-btn report" id="btnReport" type="button"><i class="fa-solid fa-flag"></i> Report</button>
+      </div>
+      <div class="inline-panel" id="reportPanel">
+        <div id="reportOptions">
+          <div class="report-option" data-reason="Copyright Infringement">Copyright Infringement</div>
+          <div class="report-option" data-reason="Inappropriate Content">Inappropriate Content</div>
+          <div class="report-option" data-reason="Spam">Spam</div>
+          <div class="report-option" data-reason="Video Not Playing">Video Not Playing</div>
+          <div class="report-option" data-reason="Buffering">Buffering</div>
+          <div class="report-option" data-reason="Audio Not Playing">Audio Not Playing</div>
+          <div class="report-option" data-reason="Other">Other</div>
+        </div>
+        <button class="report-submit" id="submitReport">Submit Report</button>
+      </div>
+    </div>
+
     <div class="media-bar">
-      <span class="label"><i class="fa-solid fa-sliders"></i> MEDIA</span>
-      <button class="chip" id="btnAudio" type="button"><i class="fa-solid fa-music"></i> Audio</button>
-      <div id="audioPanel"></div>
+      <div class="media-buttons">
+        <span class="label"><i class="fa-solid fa-sliders"></i> MEDIA</span>
+        <button class="chip" id="btnAudio" type="button"><i class="fa-solid fa-music"></i> Audio</button>
+        <button class="chip show" id="btnSubs" type="button"><i class="fa-solid fa-closed-captioning"></i> Subtitles</button>
+      </div>
+      <div class="inline-panel" id="audioPanel"></div>
+      <div class="inline-panel" id="subsPanel">
+        <div class="sub-toggle-row">
+          <span>Subtitles</span>
+          <label class="switch">
+            <input type="checkbox" id="subsToggle">
+            <span class="switch-track"></span>
+          </label>
+        </div>
+      </div>
     </div>
 
     <div class="actions">
-      <a class="btn primary" href="{{file_url}}" download><i class="fa-solid fa-download"></i> Download</a>
-      <button class="btn" type="button" onclick="copyLink()"><i class="fa-solid fa-link"></i> Copy Link</button>
-      <a class="btn mx" id="mxLink" href="#"><i class="fa-solid fa-play"></i> MX</a>
-      <a class="btn vlc" id="vlcLink" href="#"><i class="fa-solid fa-play"></i> VLC</a>
-      <a class="btn playit" id="playitLink" href="#"><i class="fa-solid fa-play"></i> PlayIt</a>
+      <button class="btn primary" type="button" id="btnDownload"><i class="fa-solid fa-download"></i> Download</button>
+      <button class="btn external" type="button" id="btnExternal"><i class="fa-solid fa-up-right-from-square"></i> External Player</button>
+    </div>
+
+    <div class="dl-wrap inline-panel" id="dlPanel">
+      <a class="dl-direct" href="{{file_url}}" download><i class="fa-solid fa-download"></i> Direct Download</a>
+      <div class="dm-grid">
+        <div class="ext-item" data-dm="1dm"><span class="ext-badge" style="background:#f97316">1</span>1DM</div>
+        <div class="ext-item" data-dm="adm"><span class="ext-badge" style="background:#22c55e">A</span>ADM</div>
+        <div class="ext-item" data-dm="idm"><span class="ext-badge" style="background:#0ea5e9">I</span>IDM</div>
+        <div class="ext-item" data-dm="jdownloader"><span class="ext-badge" style="background:#eab308">J</span>JDownloader</div>
+      </div>
+    </div>
+
+    <div class="ext-wrap inline-panel open" id="extPanel">
+      <div class="ext-tabs">
+        <div class="ext-tab active" data-tab="desktop">Desktop</div>
+        <div class="ext-tab" data-tab="android">Android</div>
+        <div class="ext-tab" data-tab="ios">iOS</div>
+      </div>
+
+      <div class="ext-panel active" id="panel-desktop">
+        <div class="ext-grid">
+          <div class="ext-item" data-player="vlc-desktop"><span class="ext-badge" style="background:#f97316">V</span>VLC</div>
+          <div class="ext-item" data-player="potplayer"><span class="ext-badge" style="background:#3b82f6">P</span>PotPlayer</div>
+          <div class="ext-item" data-player="mpv"><span class="ext-badge" style="background:#64748b">M</span>MPV</div>
+          <div class="ext-item" data-player="kmplayer-desktop"><span class="ext-badge" style="background:#a855f7">K</span>KMPlayer</div>
+          <div class="ext-item" data-player="mpc-hc"><span class="ext-badge" style="background:#3b82f6">M</span>MPC-HC</div>
+          <div class="ext-item" data-player="iina"><span class="ext-badge" style="background:#1e1b4b">I</span>IINA</div>
+        </div>
+      </div>
+
+      <div class="ext-panel" id="panel-android">
+        <div class="ext-grid">
+          <div class="ext-item" data-player="vlc-android"><span class="ext-badge" style="background:#f97316">V</span>VLC</div>
+          <div class="ext-item" data-player="mx"><span class="ext-badge" style="background:#06b6d4">MX</span>MX Player</div>
+          <div class="ext-item" data-player="mx-pro"><span class="ext-badge" style="background:#06b6d4">MX</span>MX Player Pro</div>
+          <div class="ext-item" data-player="splayer"><span class="ext-badge" style="background:#ec4899">S</span>Splayer</div>
+          <div class="ext-item" data-player="next-player"><span class="ext-badge" style="background:#14b8a6">N</span>Next Player</div>
+          <div class="ext-item" data-player="nova"><span class="ext-badge" style="background:#a855f7">N</span>Nova Player</div>
+          <div class="ext-item" data-player="mpv-android"><span class="ext-badge" style="background:#64748b">M</span>MPV Android</div>
+          <div class="ext-item" data-player="just-player"><span class="ext-badge" style="background:#475569">J</span>Just Player</div>
+          <div class="ext-item" data-player="nplayer-android"><span class="ext-badge" style="background:#22c55e">N</span>nPlayer</div>
+          <div class="ext-item" data-player="playit"><span class="ext-badge" style="background:#e33d3d">P</span>PlayIt</div>
+          <div class="ext-item" data-player="xplayer"><span class="ext-badge" style="background:#0ea5e9">X</span>XPlayer</div>
+          <div class="ext-item" data-player="bsplayer"><span class="ext-badge" style="background:#7c3aed">B</span>BSPlayer</div>
+        </div>
+      </div>
+
+      <div class="ext-panel" id="panel-ios">
+        <div class="ext-grid">
+          <div class="ext-item" data-player="vlc-ios"><span class="ext-badge" style="background:#f97316">V</span>VLC</div>
+          <div class="ext-item" data-player="infuse"><span class="ext-badge" style="background:#f59e0b">I</span>Infuse</div>
+          <div class="ext-item" data-player="nplayer-ios"><span class="ext-badge" style="background:#22c55e">N</span>nPlayer</div>
+          <div class="ext-item" data-player="iina-ios"><span class="ext-badge" style="background:#1e1b4b">I</span>IINA</div>
+        </div>
+      </div>
     </div>
 
     <div class="note">
-      Multi-audio is supported in browser. Choosing a language, or jumping to a
-      new part of the video while a language is selected, takes a moment while
-      the server prepares audio for that spot. For best multi-audio experience
-      use MX Player or VLC.
+      Non-AAC audio needs a moment to convert before it plays — this can make things slow. For a smoother experience, use an external player (VLC, MX Player, etc.).
     </div>
 
-    <footer>© Deendayal Stream · For personal use only</footer>
+    <footer>© Cinemaniacs Hub · For personal use only</footer>
   </div>
 
   <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
   <script>
     const STREAM_URL = "{{file_url}}";
-    // Must match AUDIO_WINDOW_SECONDS in audio_tracks.py.
     const AUDIO_WINDOW_SECONDS = 600;
-    // Ask for the follow-on window this early. The server needs time to run
-    // ffmpeg, so keep this generous.
     const ROLLOVER_LEAD = 45;
-    // Above this drift the playback-rate trim is too slow. Fetch fresh audio.
     const REFETCH_DRIFT = 1.5;
-    // A fresh audio element needs a moment between play() and real sound, so
-    // the next window is started this early. Calibration knob: measured on
-    // desktop Chrome, a 0.35 s lead landed the seam 0.14 s early and a 0.05 s
-    // lead landed it 0.28 s late, so the cost is about a quarter second.
-    // Raise it if the seam sounds late on your device, lower it if early.
     const SEAM_LEAD = 0.25;
 
     /* ------------------------------------------------------------------
        Why this file never sets currentTime on an audio element.
-
-       /audio/ is a live chunked response. It has no Content-Length and it
-       cannot serve Range. Chrome therefore reports  seekable = [0,0]  even
-       though  buffered = [0, 600].  Writing currentTime is then clamped to
-       zero and the audio JUMPS BACK TO THE START of the window. Measured.
-
-       So the audio is never seeked. The server is asked to start the track
-       at the exact position we need, the element plays from 0, and drift is
-       trimmed with playbackRate. Anything that would need a seek asks the
-       server for fresh audio instead.
+       /audio/ is a live chunked response with no Content-Length and no
+       Range support. Chrome reports seekable = [0,0] even though
+       buffered = [0, 600], so writing currentTime jumps back to zero.
+       Audio is never seeked: the server starts the track at the exact
+       position needed, the element plays from 0, drift is trimmed with
+       playbackRate, and anything needing a seek asks for fresh audio.
        ------------------------------------------------------------------ */
 
     let player = null;
     let activeAudio = null;
     let activeTrackIdx = null;
-    // Movie time that activeAudio.currentTime === 0 corresponds to.
     let audioAnchor = 0;
-    // Pre-fetched follow-on window, so the sound does not stop at the seam.
     let nextAudio = null;
     let nextAnchor = 0;
     let nextReady = false;
@@ -247,9 +344,9 @@
     let audioCtx = null;
     let vidGainNode = null;
     let useFallbackMute = false;
-    // Bumped on every (re)request so a late response cannot overwrite a newer one.
     let audioRequestId = 0;
     let seekDebounceTimer = null;
+    let audioMode = 'pending'; // 'pending' | 'none' | 'list'
 
     function buildAudioUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
@@ -271,14 +368,10 @@
       mal:'Malayalam', ml:'Malayalam', kan:'Kannada', kn:'Kannada',
       ben:'Bengali', bn:'Bengali', pan:'Punjabi', pa:'Punjabi'
     };
-    function trackLabel(track, idx) {
+    function trackLabel(track) {
       const meta = track.tags || {};
       const lang = (meta.language || '').toLowerCase();
-      const title = meta.title || '';
-      let label = LANG_MAP[lang] || lang || ('Track ' + (idx + 1));
-      if (idx === 0) label += ' (Default)';
-      if (title && title.length < 40) label += ' — ' + title;
-      return label;
+      return LANG_MAP[lang] || (meta.title || lang || 'Unknown');
     }
     function getVideo() { return document.querySelector('#player'); }
 
@@ -287,22 +380,14 @@
       const txt = document.getElementById('mediaLoadingText');
       const plyrEl = document.querySelector('.plyr');
       if (txt && text) txt.textContent = text;
-      if (show) {
-        if (el) el.classList.add('show');
-        if (plyrEl) plyrEl.classList.add('controls-locked');
-      } else {
-        if (el) el.classList.remove('show');
-        if (plyrEl) plyrEl.classList.remove('controls-locked');
-      }
+      if (show) { if (el) el.classList.add('show'); if (plyrEl) plyrEl.classList.add('controls-locked'); }
+      else { if (el) el.classList.remove('show'); if (plyrEl) plyrEl.classList.remove('controls-locked'); }
     }
     function updateLoadingUI() {
       if (isPreparingAudio) { showLoadingUI(true, 'Preparing audio…'); return; }
       if (buffering) { showLoadingUI(true, 'Loading…'); return; }
       showLoadingUI(false);
     }
-    // ponytail: the overlay covers the player and eats clicks, so one pause is
-    // enough. The old 100 ms "force pause" timer is what made the picture jerk
-    // back and forth a few frames on every track switch.
     function setPreparing(on) {
       isPreparingAudio = on;
       const plyrEl = document.querySelector('.plyr');
@@ -327,35 +412,15 @@
         if (vidGainNode) vidGainNode.gain.value = (activeTrackIdx !== null) ? 0 : 1;
       } catch (e) { useFallbackMute = true; }
     }
-    function silenceVideo(vid) {
-      initAudioContext(vid);
-      if (useFallbackMute) { if (vid) vid.muted = true; return; }
-      if (vidGainNode) vidGainNode.gain.value = 0;
-    }
-    function restoreVideoAudio(vid) {
-      if (useFallbackMute) { if (vid) vid.muted = false; return; }
-      if (vidGainNode) vidGainNode.gain.value = 1;
-    }
-    function killAudioEl(el) {
-      if (!el) return;
-      try {
-        el.pause();
-        el.removeAttribute('src');
-        el.load();
-        el.remove();
-      } catch (e) {}
-    }
+    function silenceVideo(vid) { initAudioContext(vid); if (useFallbackMute) { if (vid) vid.muted = true; return; } if (vidGainNode) vidGainNode.gain.value = 0; }
+    function restoreVideoAudio(vid) { if (useFallbackMute) { if (vid) vid.muted = false; return; } if (vidGainNode) vidGainNode.gain.value = 1; }
+    function killAudioEl(el) { if (!el) return; try { el.pause(); el.removeAttribute('src'); el.load(); el.remove(); } catch (e) {} }
     function destroyAudio() { killAudioEl(activeAudio); activeAudio = null; }
-    // The window running out IS the seam. Acting on the element's own 'ended'
-    // event lands it at exactly the right movie time and keeps working in a
-    // background tab, where requestAnimationFrame is stopped completely.
     function activate(el, anchor) {
-      activeAudio = el;
-      audioAnchor = anchor;
+      activeAudio = el; audioAnchor = anchor;
       el.addEventListener('ended', function () {
         if (el !== activeAudio || activeTrackIdx === null || isPreparingAudio) return;
-        if (nextReady) promoteNext();
-        else requestAudio(activeTrackIdx, getVideo().currentTime);
+        if (nextReady) promoteNext(); else requestAudio(activeTrackIdx, getVideo().currentTime);
       }, { once: true });
     }
     function dropNext() { killAudioEl(nextAudio); nextAudio = null; nextAnchor = 0; nextReady = false; }
@@ -366,86 +431,54 @@
     }
     function newAudioEl() {
       const el = document.createElement('audio');
-      el.preload = 'auto';
-      el.style.display = 'none';
+      el.preload = 'auto'; el.style.display = 'none';
       if ('preservesPitch' in el) el.preservesPitch = true;
       if ('webkitPreservesPitch' in el) el.webkitPreservesPitch = true;
       document.body.appendChild(el);
       return el;
     }
-    // Movie time where the loaded window ends.
-    // Do NOT use activeAudio.duration here. On a raw ADTS stream the browser
-    // estimates duration from the bitrate: a measured 30.0 s window was
-    // reported as 41.4 s. The nominal length is what the server guarantees
-    // with -t, and it is accurate to a few ms.
     function windowEnd() { return audioAnchor + AUDIO_WINDOW_SECONDS; }
 
-    // Ask the server for `streamIndex` starting at exactly `atTime`. Used when
-    // picking a language, after a seek, and when drift grows too large.
     function requestAudio(streamIndex, atTime) {
       const vid = getVideo();
       if (!vid) return;
       if (seekDebounceTimer) { clearTimeout(seekDebounceTimer); seekDebounceTimer = null; }
-
       const anchor = Math.max(0, (atTime != null) ? atTime : (vid.currentTime || 0));
       const myId = ++audioRequestId;
       const wasPlaying = !vid.paused;
-
       initAudioContext(vid);
-      // Pause once. The video must not move while the server prepares, or the
-      // audio we asked for no longer matches where the picture is.
       if (wasPlaying) vid.pause();
-      dropNext();
-      destroyAudio();
-      activeTrackIdx = streamIndex;
-      audioAnchor = anchor;
-      playAfterPrepare = false;
-      silenceVideo(vid);
-      setPreparing(true);
-      markActiveChip(streamIndex);
+      dropNext(); destroyAudio();
+      activeTrackIdx = streamIndex; audioAnchor = anchor; playAfterPrepare = false;
+      silenceVideo(vid); setPreparing(true); markActiveLang(streamIndex);
 
       const el = newAudioEl();
-
       el.addEventListener('error', function () {
         if (myId !== audioRequestId) return;
-        setPreparing(false);
-        switchToDefault();
+        setPreparing(false); switchToDefault();
         alert('Selected audio track failed. Switched back to default.');
       });
-
       el.addEventListener('canplay', function onCanPlay() {
         el.removeEventListener('canplay', onCanPlay);
         if (myId !== audioRequestId) { killAudioEl(el); return; }
-        activate(el, anchor);
-        syncVolume();
-        el.playbackRate = vid.playbackRate;
-        setPreparing(false);
+        activate(el, anchor); syncVolume(); el.playbackRate = vid.playbackRate; setPreparing(false);
         if (wasPlaying || playAfterPrepare) { playAfterPrepare = false; startBoth(); }
       }, { once: true });
-
       el.src = buildAudioUrl(streamIndex, anchor);
       el.load();
     }
 
-    // The server sends one window per request, not the rest of the movie. Load
-    // the follow-on window early and swap it in at the seam.
     function prefetchNext() {
       if (nextAudio || activeTrackIdx === null || !activeAudio) return;
       const anchor = windowEnd();
       const myId = audioRequestId;
       const el = newAudioEl();
       nextAudio = el; nextAnchor = anchor; nextReady = false;
-      el.addEventListener('canplay', function () {
-        if (myId !== audioRequestId || el !== nextAudio) { killAudioEl(el); return; }
-        nextReady = true;
-      }, { once: true });
+      el.addEventListener('canplay', function () { if (myId !== audioRequestId || el !== nextAudio) { killAudioEl(el); return; } nextReady = true; }, { once: true });
       el.addEventListener('error', function () { if (el === nextAudio) dropNext(); });
       el.src = buildAudioUrl(activeTrackIdx, anchor);
       el.load();
     }
-    // Called SEAM_LEAD seconds BEFORE the seam. The new element makes no sound
-    // during its startup delay, so the old window keeps playing and covers the
-    // gap. The instant the new one really starts, it takes over.
     function promoteNext() {
       const vid = getVideo();
       const el = nextAudio, anchor = nextAnchor;
@@ -453,15 +486,10 @@
       if (!el || !vid) { killAudioEl(el); return; }
       if (player) { el.volume = player.volume; el.muted = player.muted; }
       el.playbackRate = vid.playbackRate;
-
       const old = activeAudio;
       const myId = audioRequestId;
       const t0 = performance.now();
-      function handOver() {
-        if (myId !== audioRequestId) { killAudioEl(el); return; }
-        activate(el, anchor);
-        killAudioEl(old);
-      }
+      function handOver() { if (myId !== audioRequestId) { killAudioEl(el); return; } activate(el, anchor); killAudioEl(old); }
       if (vid.paused) { handOver(); return; }
       el.play().catch(function () {});
       (function waitForSound() {
@@ -471,182 +499,292 @@
         setTimeout(waitForSound, 20);
       })();
     }
-
-    // Start the audio first, let the picture follow once sound is really
-    // coming out. The trim loop removes the few ms of start slack.
     function startBoth() {
       const vid = getVideo();
       if (!activeAudio || !vid) return;
-      activeAudio.addEventListener('playing', function () {
-        vid.play().catch(function () {});
-      }, { once: true });
+      activeAudio.addEventListener('playing', function () { vid.play().catch(function () {}); }, { once: true });
       activeAudio.play().catch(function () { vid.play().catch(function () {}); });
     }
-
     function switchToDefault() {
       const vid = getVideo();
       const wasPlaying = vid && !vid.paused;
       if (seekDebounceTimer) { clearTimeout(seekDebounceTimer); seekDebounceTimer = null; }
-      audioRequestId++; // invalidate any in-flight request for a language track
-      setPreparing(false);
-      playAfterPrepare = false;
-      dropNext();
-      destroyAudio();
-      activeTrackIdx = null;
-      audioAnchor = 0;
-      restoreVideoAudio(vid);
-      markActiveChip(null);
+      audioRequestId++; setPreparing(false); playAfterPrepare = false;
+      dropNext(); destroyAudio();
+      activeTrackIdx = null; audioAnchor = 0;
+      restoreVideoAudio(vid); markActiveLang(null);
       if (vid && wasPlaying) vid.play().catch(function () {});
     }
-
-    function markActiveChip(streamIndex) {
-      document.querySelectorAll('#audioPanel .chip').forEach(function (el) {
+    function markActiveLang(streamIndex) {
+      document.querySelectorAll('#audioPanel .lang-item').forEach(function (el) {
         el.classList.toggle('active', String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex));
       });
     }
 
-    function renderAudioPanel(tracks) {
+    /* -------- Audio button: hidden until tracks are fetched -------- */
+    function renderAudioList(tracks) {
+      const btn = document.getElementById('btnAudio');
       const panel = document.getElementById('audioPanel');
-      if (!panel || !tracks || tracks.length < 2) {
-        document.getElementById('btnAudio').style.display = 'none';
-        return;
-      }
+      btn.classList.add('show');
+      if (!tracks || tracks.length < 2) { audioMode = 'none'; panel.innerHTML = ''; return; }
+      audioMode = 'list';
       panel.innerHTML = '';
       tracks.forEach(function (track, idx) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'chip' + (idx === 0 ? ' active' : '');
-        b.dataset.index = idx === 0 ? 'default' : track.index;
-        b.textContent = trackLabel(track, idx);
-        b.onclick = function () {
-          if (idx === 0) switchToDefault();
-          else requestAudio(track.index);
-        };
-        panel.appendChild(b);
+        const item = document.createElement('div');
+        item.className = 'lang-item' + (idx === 0 ? ' active' : '');
+        item.dataset.index = idx === 0 ? 'default' : track.index;
+        item.textContent = trackLabel(track);
+        item.onclick = function () { if (idx === 0) switchToDefault(); else requestAudio(track.index); };
+        panel.appendChild(item);
       });
     }
 
-    document.getElementById('btnAudio').addEventListener('click', function () {
-      document.getElementById('audioPanel').classList.toggle('show');
-    });
+    function toggleInline(btn, panel, others) {
+      const isOpen = panel.classList.contains('open');
+      others.forEach(function (p) { p.panel.classList.remove('open'); p.btn.classList.remove('open'); });
+      if (!isOpen) { panel.classList.add('open'); btn.classList.add('open'); }
+    }
 
+    const audioBtn = document.getElementById('btnAudio');
+    const audioPanel = document.getElementById('audioPanel');
+    const subsBtn = document.getElementById('btnSubs');
+    const subsPanel = document.getElementById('subsPanel');
+
+    audioBtn.addEventListener('click', function () {
+      if (audioMode === 'pending') return;
+      if (audioMode === 'none') { alert('No Audio Available — this file has only one audio track.'); return; }
+      toggleInline(audioBtn, audioPanel, [{ btn: subsBtn, panel: subsPanel }]);
+    });
+    subsBtn.addEventListener('click', function () {
+      toggleInline(subsBtn, subsPanel, [{ btn: audioBtn, panel: audioPanel }]);
+    });
+    // Dummy subtitle toggle — no real subtitle track wired up yet.
+    document.getElementById('subsToggle').addEventListener('change', function () {});
+
+    /* -------- Like / Dislike -------- */
     (function () {
-      const intent = 'intent://' + STREAM_URL.replace(/^https?:\/\//, '') + '#Intent;type=video/*;';
-      document.getElementById('vlcLink').href = 'vlc://' + STREAM_URL;
-      document.getElementById('mxLink').href = intent + 'package=com.mxtech.videoplayer.ad;end';
-      document.getElementById('playitLink').href = intent + 'package=com.jio.media.jiobeats;end';
+      let likes = 0, dislikes = 0, state = null;
+      const likeBtn = document.getElementById('btnLike');
+      const dislikeBtn = document.getElementById('btnDislike');
+      const likeCount = document.getElementById('likeCount');
+      const dislikeCount = document.getElementById('dislikeCount');
+      function render() {
+        likeCount.textContent = likes; dislikeCount.textContent = dislikes;
+        likeBtn.classList.toggle('active', state === 'like');
+        dislikeBtn.classList.toggle('active', state === 'dislike');
+      }
+      likeBtn.addEventListener('click', function () {
+        if (state === 'like') { likes--; state = null; } else { if (state === 'dislike') dislikes--; likes++; state = 'like'; }
+        render();
+      });
+      dislikeBtn.addEventListener('click', function () {
+        if (state === 'dislike') { dislikes--; state = null; } else { if (state === 'like') likes--; dislikes++; state = 'dislike'; }
+        render();
+      });
+      render();
+    })();
+
+    /* -------- Report (inline) -------- */
+    (function () {
+      const btn = document.getElementById('btnReport');
+      const panel = document.getElementById('reportPanel');
+      const options = document.querySelectorAll('.report-option');
+      const submitBtn = document.getElementById('submitReport');
+      let selected = null;
+      btn.addEventListener('click', function () { panel.classList.toggle('open'); });
+      options.forEach(function (opt) {
+        opt.addEventListener('click', function () {
+          options.forEach(function (o) { o.classList.remove('active'); });
+          opt.classList.add('active');
+          selected = opt.dataset.reason;
+        });
+      });
+      submitBtn.addEventListener('click', function () {
+        if (!selected) { alert('Please select a reason.'); return; }
+        alert('Thanks for reporting: ' + selected);
+        panel.classList.remove('open');
+        options.forEach(function (o) { o.classList.remove('active'); });
+        selected = null;
+      });
+    })();
+
+    /* -------- Download (inline) -------- */
+    (function () {
+      const btn = document.getElementById('btnDownload');
+      const panel = document.getElementById('dlPanel');
+      btn.addEventListener('click', function () {
+        panel.classList.toggle('open');
+        btn.classList.toggle('open', panel.classList.contains('open'));
+      });
+
+      function androidIntent(pkg) { return 'intent:' + STREAM_URL + '#Intent;action=android.intent.action.VIEW;type=video/*;package=' + pkg + ';end'; }
+      const dmMap = {
+        '1dm': function () { window.location.href = androidIntent('idm.internet.download.manager.plus'); },
+        'adm': function () { window.location.href = androidIntent('com.dv.adm'); },
+        'idm': function () { window.location.href = androidIntent('idm.internet.download.manager'); },
+        'jdownloader': function () { window.location.href = androidIntent('org.jdownloader.api.android'); }
+      };
+      document.querySelectorAll('#dlPanel [data-dm]').forEach(function (item) {
+        item.addEventListener('click', function () { const fn = dmMap[item.dataset.dm]; if (fn) fn(); });
+      });
+    })();
+
+    /* -------- External player (inline) -------- */
+    (function () {
+      const btn = document.getElementById('btnExternal');
+      const panel = document.getElementById('extPanel');
+      const tabs = document.querySelectorAll('.ext-tab');
+      const panels = document.querySelectorAll('.ext-panel');
+      btn.classList.add('open');
+      // Always expanded — button just scrolls it into view instead of toggling.
+      btn.addEventListener('click', function () {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+      tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          tabs.forEach(function (t) { t.classList.remove('active'); });
+          panels.forEach(function (p) { p.classList.remove('active'); });
+          tab.classList.add('active');
+          document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+        });
+      });
+
+      function androidIntent(pkg) { return 'intent:' + STREAM_URL + '#Intent;action=android.intent.action.VIEW;type=video/*;package=' + pkg + ';end'; }
+      function copyForDesktop(name) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied! Open ' + name + ' and paste the link (Ctrl+O / open URL).'); });
+        } else { prompt('Copy this link and open it in ' + name + ':', STREAM_URL); }
+      }
+
+      const actionsMap = {
+        'vlc-desktop': function () { window.location.href = 'vlc://' + STREAM_URL.replace(/^https?:\/\//, ''); },
+        'potplayer': function () { copyForDesktop('PotPlayer'); },
+        'mpv': function () { copyForDesktop('MPV'); },
+        'kmplayer-desktop': function () { copyForDesktop('KMPlayer'); },
+        'mpc-hc': function () { copyForDesktop('MPC-HC'); },
+        'iina': function () { copyForDesktop('IINA'); },
+        'vlc-android': function () { window.location.href = androidIntent('org.videolan.vlc'); },
+        'mx': function () { window.location.href = androidIntent('com.mxtech.videoplayer.ad'); },
+        'mx-pro': function () { window.location.href = androidIntent('com.mxtech.videoplayer.pro'); },
+        'splayer': function () { window.location.href = androidIntent('com.young.simple.player'); },
+        'next-player': function () { window.location.href = androidIntent('dev.anilbeesetti.nextplayer'); },
+        'nova': function () { window.location.href = androidIntent('com.tommsy.novaplayer'); },
+        'mpv-android': function () { window.location.href = androidIntent('is.xyz.mpv'); },
+        'just-player': function () { window.location.href = androidIntent('com.brouken.player'); },
+        'nplayer-android': function () { window.location.href = androidIntent('com.nplayer.nplayer'); },
+        'playit': function () { window.location.href = androidIntent('com.playit.videoplayer'); },
+        'xplayer': function () { window.location.href = androidIntent('com.inshot.xplayer'); },
+        'bsplayer': function () { window.location.href = androidIntent('com.bsplayer.bspandroid.free'); },
+        'vlc-ios': function () { window.location.href = 'vlc-x-callback://x-callback-url/stream?url=' + encodeURIComponent(STREAM_URL); },
+        'infuse': function () { window.location.href = 'infuse://x-callback-url/play?url=' + encodeURIComponent(STREAM_URL); },
+        'nplayer-ios': function () { window.location.href = STREAM_URL.replace(/^https?:\/\//, 'nplayer-$&').replace('nplayer-https://', 'nplayer-http://'); },
+        'iina-ios': function () { copyForDesktop('IINA'); }
+      };
+
+      document.querySelectorAll('.ext-item').forEach(function (item) {
+        item.addEventListener('click', function () { const fn = actionsMap[item.dataset.player]; if (fn) fn(); });
+      });
     })();
 
     function copyLink() {
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied!'); })
-          .catch(function () { prompt('Copy this link:', STREAM_URL); });
+        navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied!'); }).catch(function () { prompt('Copy this link:', STREAM_URL); });
       } else prompt('Copy this link:', STREAM_URL);
+    }
+
+    /* -------- Share -------- */
+    document.getElementById('btnShare').addEventListener('click', function () {
+      if (navigator.share) {
+        navigator.share({ title: '{{file_name}}', url: STREAM_URL }).catch(function () {});
+      } else {
+        copyLink();
+      }
+    });
+
+    /* -------- Fullscreen → force landscape (where supported) -------- */
+    function lockLandscape() {
+      try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(function () {}); } catch (e) {}
+    }
+    function unlockOrientation() {
+      try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
     }
 
     document.addEventListener('DOMContentLoaded', function () {
       showLoadingUI(true, 'Loading…');
 
       player = new Plyr('#player', {
-        controls: ['play-large','rewind','play','fast-forward','progress','current-time','duration','mute','volume','settings','fullscreen'],
+        controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'settings', 'fullscreen'],
         settings: ['speed'],
         speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
         seekTime: 10
       });
 
+      player.on('ready', function () {
+        const controls = document.querySelector('.plyr__controls');
+        if (!controls) return;
+        const cur = controls.querySelector('.plyr__time--current');
+        const dur = controls.querySelector('.plyr__time--duration');
+        if (cur && dur && !controls.querySelector('.time-sep')) {
+          const sep = document.createElement('span');
+          sep.className = 'time-sep';
+          sep.textContent = '/';
+          dur.parentNode.insertBefore(sep, dur);
+        }
+      });
+
+      player.on('enterfullscreen', lockLandscape);
+      player.on('exitfullscreen', unlockOrientation);
       player.on('volumechange', syncVolume);
 
       document.addEventListener('keydown', function (e) {
         if (!isPreparingAudio) return;
         const key = e.key.toLowerCase();
-        if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') {
-          e.preventDefault(); e.stopPropagation();
-        }
+        if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') { e.preventDefault(); e.stopPropagation(); }
       }, true);
 
       fetch(buildTracksUrl())
         .then(function (r) { return r.json(); })
-        .then(function (tracks) {
-          if (Array.isArray(tracks) && tracks.length) renderAudioPanel(tracks);
-        })
-        .catch(function () {});
+        .then(function (tracks) { renderAudioList(tracks); })
+        .catch(function () { renderAudioList([]); });
 
       const vid = getVideo();
       if (!vid) return;
 
-      ['loadstart','waiting','stalled'].forEach(function (ev) {
-        vid.addEventListener(ev, function () { buffering = true; updateLoadingUI(); });
-      });
-      ['canplay','playing','loadeddata'].forEach(function (ev) {
-        vid.addEventListener(ev, function () { buffering = false; updateLoadingUI(); });
-      });
-      // The media can already be ready by the time we get here. Without this
-      // the first 'Loading…' overlay never clears and the player stays locked.
+      ['loadstart', 'waiting', 'stalled'].forEach(function (ev) { vid.addEventListener(ev, function () { buffering = true; updateLoadingUI(); }); });
+      ['canplay', 'playing', 'loadeddata'].forEach(function (ev) { vid.addEventListener(ev, function () { buffering = false; updateLoadingUI(); }); });
       buffering = vid.readyState < 3;
       updateLoadingUI();
 
-      vid.addEventListener('play', function () {
-        if (isPreparingAudio) { playAfterPrepare = true; vid.pause(); updateLoadingUI(); }
-      });
-      vid.addEventListener('pause', function () {
-        if (activeAudio && !isPreparingAudio) activeAudio.pause();
-      });
-      // The Plyr speed menu changes the video rate only. Without this the audio
-      // keeps running at 1x and drifts away for good.
-      vid.addEventListener('ratechange', function () {
-        if (activeAudio) activeAudio.playbackRate = vid.playbackRate;
-      });
-      vid.addEventListener('seeking', function () {
-        if (activeAudio && !activeAudio.paused) activeAudio.pause();
-      });
-      // Any jump needs audio that starts at the new spot. We cannot seek the
-      // audio element, so we always fetch. Debounced, so dragging the progress
-      // bar does not fire a request per pixel.
+      vid.addEventListener('play', function () { if (isPreparingAudio) { playAfterPrepare = true; vid.pause(); updateLoadingUI(); } });
+      vid.addEventListener('pause', function () { if (activeAudio && !isPreparingAudio) activeAudio.pause(); });
+      vid.addEventListener('ratechange', function () { if (activeAudio) activeAudio.playbackRate = vid.playbackRate; });
+      vid.addEventListener('seeking', function () { if (activeAudio && !activeAudio.paused) activeAudio.pause(); });
       vid.addEventListener('seeked', function () {
         if (activeTrackIdx === null || isPreparingAudio) return;
         dropNext();
         if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
-        seekDebounceTimer = setTimeout(function () {
-          if (activeTrackIdx === null) return;
-          requestAudio(activeTrackIdx, getVideo().currentTime);
-        }, 400);
+        seekDebounceTimer = setTimeout(function () { if (activeTrackIdx === null) return; requestAudio(activeTrackIdx, getVideo().currentTime); }, 400);
       });
 
-      // Trim loop, 100 ms. Holds the audio while the video is paused, seeking
-      // or starved, starts the next window one SEAM_LEAD before the seam, and
-      // corrects drift with playbackRate — never with a seek.
       setInterval(function () {
         if (!activeAudio || isPreparingAudio) return;
-        if (vid.paused || vid.seeking || vid.readyState < 3) {
-          if (!activeAudio.paused) activeAudio.pause();
-          return;
-        }
+        if (vid.paused || vid.seeking || vid.readyState < 3) { if (!activeAudio.paused) activeAudio.pause(); return; }
         if (vid.currentTime > windowEnd() - ROLLOVER_LEAD) prefetchNext();
         if (nextReady && vid.currentTime >= nextAnchor - SEAM_LEAD) { promoteNext(); return; }
-
         const expected = vid.currentTime - audioAnchor;
         if (activeAudio.paused) {
-          // The window ran out and the seam swap did not happen. Fetch fresh
-          // audio rather than sitting in silence.
           if (activeAudio.ended) { requestAudio(activeTrackIdx, vid.currentTime); return; }
           activeAudio.play().catch(function () {});
           return;
         }
         const rate = vid.playbackRate || 1;
         const drift = activeAudio.currentTime - expected;
-        // Exposed for debugging: type __sync in the browser console.
         window.__sync = { video: vid.currentTime, anchor: audioAnchor, drift: drift };
-
-        if (Math.abs(drift) > REFETCH_DRIFT) {
-          requestAudio(activeTrackIdx, vid.currentTime);
-          return;
-        }
+        if (Math.abs(drift) > REFETCH_DRIFT) { requestAudio(activeTrackIdx, vid.currentTime); return; }
         if (Math.abs(drift) > 0.04) {
           const lo = rate * 0.95, hi = rate * 1.05;
           activeAudio.playbackRate = Math.min(hi, Math.max(lo, rate - drift * 0.4));
-        } else if (activeAudio.playbackRate !== rate) {
-          activeAudio.playbackRate = rate;
-        }
+        } else if (activeAudio.playbackRate !== rate) { activeAudio.playbackRate = rate; }
       }, 100);
     });
   </script>
