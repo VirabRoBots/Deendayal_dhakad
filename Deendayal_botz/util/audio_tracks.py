@@ -26,7 +26,11 @@ _file_cache = {}
 _extract_locks = {}
 _inflight = {}
 
-CACHE_MAX_AGE_SECONDS = 12 * 60 * 60
+# Files are no longer kept as a persistent cache — every extraction is
+# written to a temp file, streamed, and deleted the moment it's been sent
+# (or the moment it's superseded by a seek/track-switch/drift refetch).
+# This loop is just a safety net for anything left behind by a crash.
+CACHE_MAX_AGE_SECONDS = 30 * 60
 CACHE_MIN_FREE_BYTES = 1 * 1024 ** 3
 
 # MUST match AUDIO_WINDOW_SECONDS in the player page.
@@ -135,10 +139,10 @@ async def get_tracks(msg_id: int, secure_hash: str) -> list:
     return tracks
 
 
-def _cached_audio_path(msg_id: int, stream_index: int, bucket_start: int) -> Path:
-    # The window length is part of the name: files made by the old build
-    # (extracted to the end of the movie) must not be served as a window.
-    return TEMP_DIR / f"{msg_id}_t{stream_index}_s{bucket_start:.3f}_w{AUDIO_WINDOW_SECONDS}.aac"
+def _temp_audio_path(msg_id: int, stream_index: int, bucket_start: int) -> Path:
+    """Unique per-request temp file. Not a cache — deleted as soon as it's
+    sent, or immediately if a newer request for this track supersedes it."""
+    return TEMP_DIR / f"{msg_id}_t{stream_index}_s{bucket_start:.3f}_w{AUDIO_WINDOW_SECONDS}.part.aac"
 
 
 def _build_ffmpeg_cmd(internal_url: str, stream_index: int, bucket_start: float,
@@ -184,19 +188,68 @@ def _build_ffmpeg_cmd(internal_url: str, stream_index: int, bucket_start: float,
     return cmd
 
 
+def _kill_job(job: dict, reason: str):
+    try:
+        if job["proc"].returncode is None:
+            job["proc"].kill()
+            logging.info(
+                f"[AudioCleanup] Killed in-progress download "
+                f"msg={job['msg_id']} stream={job['stream_index']} "
+                f"start={job['bucket_start']:.3f}s reason={reason}"
+            )
+    except Exception as e:
+        logging.warning(f"[AudioCleanup] kill failed: {e}")
+
+
+def _delete_file(path: Path, reason: str):
+    try:
+        if path.exists():
+            size = path.stat().st_size
+            path.unlink()
+            logging.info(f"[AudioCleanup] Deleted {path.name} size={size}bytes reason={reason}")
+    except Exception as e:
+        logging.warning(f"[AudioCleanup] delete failed for {path}: {e}")
+
+
+def _destroy_previous(msg_id: int, stream_index: int, keep_bucket: float):
+    """Kill and delete every other in-progress or leftover download for this
+    (msg_id, stream_index) that isn't the bucket we're about to serve.
+    Called at the start of every new request for this track — a seek, a
+    language switch, or a drift refetch — so nothing keeps downloading or
+    sitting on disk once it's no longer needed."""
+    for key, job in list(_inflight.items()):
+        m, s, b = key
+        if m == msg_id and s == stream_index and b != keep_bucket:
+            _kill_job(job, reason="superseded")
+            _delete_file(job["tmp_out"], reason="superseded")
+            _inflight.pop(key, None)
+
+    # Safety net: any leftover temp file on disk for this track that isn't
+    # the current bucket (e.g. left behind by a crash before this change).
+    prefix = f"{msg_id}_t{stream_index}_s"
+    for f in TEMP_DIR.glob(f"{prefix}*_w{AUDIO_WINDOW_SECONDS}*.aac"):
+        if f"_s{keep_bucket:.3f}_" not in f.name:
+            _delete_file(f, reason="orphaned")
+
+
 async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int, start_time: float = 0.0):
     """
     Stream AUDIO_WINDOW_SECONDS of audio starting exactly at start_time.
     ffmpeg fetches the source itself over HTTP (Range-capable), so seeking
     to any point costs roughly the same regardless of how far into the
     file it is. The player asks for the next window before this one ends.
+
+    Nothing here is kept as a persistent cache: the extracted window is
+    streamed straight from its temp file and deleted the moment it's been
+    sent, and any older in-flight download for this track is killed and
+    deleted the instant a newer request (seek/switch/drift-refetch) comes
+    in for the same track.
     """
     bucket_start = _round_start(start_time)
-    cache_path = _cached_audio_path(msg_id, stream_index, bucket_start)
-    if cache_path.exists():
-        return _stream_from_cached_file(cache_path)
-
     key = (msg_id, stream_index, bucket_start)
+
+    # Anything else in flight for this track is now stale — kill it first.
+    _destroy_previous(msg_id, stream_index, bucket_start)
 
     existing = _inflight.get(key)
     if existing is not None:
@@ -222,14 +275,12 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
     lock = _extract_locks.setdefault(key, asyncio.Lock())
 
     async with lock:
-        if cache_path.exists():
-            return _stream_from_cached_file(cache_path)
         existing = _inflight.get(key)
         if existing is not None:
             return _stream_from_inflight(existing)
 
         internal_url = _internal_stream_url(msg_id, secure_hash)
-        tmp_out = cache_path.with_suffix(".part.aac")
+        tmp_out = _temp_audio_path(msg_id, stream_index, bucket_start)
         cmd = _build_ffmpeg_cmd(internal_url, stream_index, bucket_start, use_copy, tmp_out)
 
         proc = await asyncio.create_subprocess_exec(
@@ -240,8 +291,10 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
         )
 
         job = {
+            "msg_id": msg_id,
+            "stream_index": stream_index,
+            "bucket_start": bucket_start,
             "tmp_out": tmp_out,
-            "cache_path": cache_path,
             "proc": proc,
             "done": asyncio.Event(),
             "ok": False,
@@ -250,24 +303,20 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
 
         async def finalize():
             _, stderr = await proc.communicate()
+            # If this key is gone from _inflight, _destroy_previous already
+            # killed and cleaned this job up because a newer request (seek,
+            # switch, drift refetch) superseded it. That is expected — log it
+            # as superseded, not as an ffmpeg failure.
+            if key not in _inflight:
+                job["done"].set()
+                return
             ok = proc.returncode == 0 and tmp_out.exists() and tmp_out.stat().st_size > 0
-            if ok:
-                try:
-                    tmp_out.rename(cache_path)
-                    job["ok"] = True
-                except Exception as e:
-                    logging.error(f"[AudioTracks] cache rename failed: {e}")
-                    job["ok"] = False
-            else:
+            job["ok"] = ok
+            if not ok:
                 logging.error(f"[AudioTracks] ffmpeg extraction failed: {stderr[:300]!r}")
-                try:
-                    if tmp_out.exists():
-                        tmp_out.unlink()
-                except Exception:
-                    pass
-                job["ok"] = False
             job["done"].set()
-            _inflight.pop(key, None)
+            # NOTE: do not pop from _inflight here if the file still needs to
+            # be streamed out — the generator pops it once it's done reading.
 
         asyncio.create_task(finalize())
 
@@ -275,19 +324,18 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
 
 
 def cancel_inflight(msg_id: int, stream_index: int, start_time: float = None):
-    for (m, s, b), job in list(_inflight.items()):
+    for key, job in list(_inflight.items()):
+        m, s, b = key
         if m != msg_id or s != stream_index:
             continue
         if start_time is not None and b != _round_start(start_time):
             continue
-        try:
-            if job["proc"].returncode is None:
-                job["proc"].kill()
-        except Exception:
-            pass
+        _kill_job(job, reason="cancel_inflight")
 
 
 def _stream_from_inflight(job: dict):
+    key = (job["msg_id"], job["stream_index"], job["bucket_start"])
+
     async def generator():
         tmp_out = job["tmp_out"]
         sent = 0
@@ -302,36 +350,18 @@ def _stream_from_inflight(job: dict):
                         yield chunk
                         continue
                 if job["done"].is_set():
-                    if job["ok"] and job["cache_path"].exists():
-                        with open(job["cache_path"], "rb") as f:
-                            f.seek(sent)
-                            rest = f.read()
-                        if rest:
-                            yield rest
                     break
                 await asyncio.sleep(0.15)
         except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
             logging.info("[AudioTracks] client disconnected mid-stream (live extraction)")
         except Exception as e:
             logging.error(f"[AudioTracks] live-stream read error: {e}")
+        finally:
+            # Whether it finished, failed, or the client disconnected: this
+            # temp file's job is done, so it never sits on disk afterward.
+            _inflight.pop(key, None)
+            _delete_file(job["tmp_out"], reason="sent")
 
-    return generator()
-
-
-def _stream_from_cached_file(path: Path):
-    async def generator():
-        try:
-            with open(path, "rb") as f:
-                while True:
-                    chunk = f.read(64 * 1024)
-                    if not chunk:
-                        break
-                    yield chunk
-                    await asyncio.sleep(0)
-        except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
-            logging.info(f"[AudioTracks] client disconnected mid-stream: {path.name}")
-        except Exception as e:
-            logging.error(f"[AudioTracks] read error on {path.name}: {e}")
     return generator()
 
 
@@ -341,12 +371,15 @@ def _dir_free_bytes(path: Path) -> int:
 
 
 async def cleanup_audio_cache():
+    """Safety net only. Normal operation deletes every temp file right after
+    it's streamed or right after it's superseded, so this should rarely find
+    anything — it exists to mop up files left behind by a crash."""
     now = time.time()
     files = sorted(TEMP_DIR.glob("*"), key=lambda p: p.stat().st_mtime if p.exists() else 0)
     for f in list(files):
         try:
             if f.exists() and now - f.stat().st_mtime > CACHE_MAX_AGE_SECONDS:
-                f.unlink()
+                _delete_file(f, reason="stale-safety-net")
         except FileNotFoundError:
             pass
 
@@ -355,12 +388,12 @@ async def cleanup_audio_cache():
         oldest = files.pop(0)
         try:
             if oldest.exists():
-                oldest.unlink()
+                _delete_file(oldest, reason="low-disk-safety-net")
         except FileNotFoundError:
             pass
 
 
-async def start_cache_cleanup_loop(interval_seconds: int = 3600):
+async def start_cache_cleanup_loop(interval_seconds: int = 900):
     while True:
         try:
             await cleanup_audio_cache()
