@@ -43,17 +43,17 @@
 
     /* ---------- Header ---------- */
     header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 8px 16px 22px; gap: 12px;
+      display: flex; align-items: center;
+      padding: 8px 16px; gap: 12px;
     }
-    .logo-container { position: relative; display: flex; align-items: center; height: 46px; }
+    .logo-container { position: relative; display: flex; align-items: center; height: 50px; }
     .logo-circle {
-      position: absolute; right: -22px; width: 40px; height: 40px; border-radius: 50%;
-      background: linear-gradient(135deg, var(--ember), #7a1f1f); opacity: 0.9;
+      position: absolute; right: -25px; width: 45px; height: 45px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--ember), #7a1f1f);
     }
     .logo-text { font-family: var(--font-head); font-size: 1.2rem; font-weight: 700; color: var(--text); position: relative; z-index: 3; }
     .live-badge {
-      display: flex; align-items: center; gap: 6px;
+      display: flex; align-items: center; gap: 6px; margin-left: auto;
       background: rgba(0, 230, 118, 0.1); border: 1px solid rgba(0, 230, 118, 0.35);
       border-radius: 20px; padding: 5px 12px; font-size: 0.7rem; font-weight: 800;
       color: var(--green); letter-spacing: 1.5px; text-transform: uppercase;
@@ -65,6 +65,7 @@
     .player-box {
       position: relative; border-radius: var(--r); overflow: hidden; background: #000;
       box-shadow: 0 20px 50px rgba(0,0,0,.45); border: 1px solid var(--border);
+      margin-top: 8px;
     }
     .plyr { --plyr-color-main: var(--ember); }
     .plyr.controls-locked .plyr__controls,
@@ -76,6 +77,25 @@
     .plyr__time--current { margin-left: 6px; }
     .plyr__time--duration { display: inline-flex !important; }
     .time-sep { color: var(--muted); margin: 0 4px; font-size: .85rem; }
+
+    .seek-zone {
+      position: absolute; top: 0; bottom: 56px;
+      width: 50%; z-index: 30;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .seek-zone-left { left: 0; }
+    .seek-zone-right { right: 0; }
+    .seek-flash {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      background: rgba(0,0,0,.55); border-radius: 50%;
+      width: 64px; height: 64px; justify-content: center;
+      color: #fff; font-size: 1.1rem; font-weight: 700;
+      opacity: 0; transform: scale(.7); transition: opacity .15s ease, transform .15s ease;
+      pointer-events: none;
+    }
+    .seek-flash i { font-size: 1rem; }
+    .seek-flash span { font-size: .68rem; font-weight: 600; }
+    .seek-flash.show { opacity: 1; transform: scale(1); }
 
     #mediaLoadingUI {
       position: absolute; inset: 0; z-index: 9999; background: rgba(10,6,5,.9);
@@ -196,6 +216,12 @@
       <video id="player" playsinline preload="metadata" controls>
         <source src="{{file_url}}">
       </video>
+      <div class="seek-zone seek-zone-left" id="seekLeft">
+        <div class="seek-flash" id="seekFlashLeft"><i class="fa-solid fa-backward"></i><span>10</span></div>
+      </div>
+      <div class="seek-zone seek-zone-right" id="seekRight">
+        <div class="seek-flash" id="seekFlashRight"><i class="fa-solid fa-forward"></i><span>10</span></div>
+      </div>
       <div id="mediaLoadingUI">
         <div class="load-ring"></div>
         <div class="load-text" id="mediaLoadingText">Loading…</div>
@@ -735,6 +761,46 @@
       player.on('enterfullscreen', lockLandscape);
       player.on('exitfullscreen', unlockOrientation);
       player.on('volumechange', syncVolume);
+
+      /* -------- Tap zones: single tap play/pause, double tap seek ±10s -------- */
+      (function () {
+        const vid = getVideo();
+        // Stop the browser's native double-tap-to-fullscreen on <video>.
+        vid.style.touchAction = 'manipulation';
+        vid.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); });
+
+        function setupZone(zoneId, flashId, direction) {
+          const zone = document.getElementById(zoneId);
+          const flash = document.getElementById(flashId);
+          let tapTimer = null;
+          let tapCount = 0;
+
+          zone.addEventListener('click', function (e) {
+            e.preventDefault();
+            tapCount++;
+            if (tapCount === 1) {
+              tapTimer = setTimeout(function () {
+                if (tapCount === 1) {
+                  // Single tap: toggle play/pause.
+                  if (player.playing) player.pause(); else player.play();
+                }
+                tapCount = 0;
+              }, 280);
+            } else if (tapCount === 2) {
+              clearTimeout(tapTimer);
+              tapCount = 0;
+              // Double tap: seek 10s in the given direction.
+              const newTime = Math.max(0, Math.min(vid.duration || Infinity, vid.currentTime + direction * 10));
+              vid.currentTime = newTime;
+              flash.classList.add('show');
+              setTimeout(function () { flash.classList.remove('show'); }, 450);
+            }
+          });
+        }
+
+        setupZone('seekLeft', 'seekFlashLeft', -1);
+        setupZone('seekRight', 'seekFlashRight', 1);
+      })();
 
       document.addEventListener('keydown', function (e) {
         if (!isPreparingAudio) return;
