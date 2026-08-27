@@ -45,6 +45,10 @@
     header {
       display: flex; align-items: center;
       padding: 8px 16px; gap: 12px;
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(10, 6, 5, 0.95);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
     }
     .logo-container { position: relative; display: flex; align-items: center; height: 50px; }
     .logo-circle {
@@ -87,14 +91,12 @@
     .seek-zone-right { right: 0; }
     .seek-flash {
       display: flex; flex-direction: column; align-items: center; gap: 4px;
-      background: rgba(0,0,0,.55); border-radius: 50%;
-      width: 64px; height: 64px; justify-content: center;
-      color: #fff; font-size: 1.1rem; font-weight: 700;
-      opacity: 0; transform: scale(.7); transition: opacity .15s ease, transform .15s ease;
+      color: #fff;
+      opacity: 0; transform: scale(.8); transition: opacity .15s ease, transform .15s ease;
       pointer-events: none;
     }
-    .seek-flash i { font-size: 1rem; }
-    .seek-flash span { font-size: .68rem; font-weight: 600; }
+    .seek-flash i { font-size: 1.3rem; text-shadow: 0 2px 8px rgba(0,0,0,.8); }
+    .seek-flash span { font-size: .78rem; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,.8); }
     .seek-flash.show { opacity: 1; transform: scale(1); }
 
     #mediaLoadingUI {
@@ -203,15 +205,15 @@
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <div class="logo-container">
-        <div class="logo-circle"></div>
-        <span class="logo-text">Cinemaniacs Hub</span>
-      </div>
-      <span class="live-badge"><span class="live-dot"></span>LIVE</span>
-    </header>
+  <header>
+    <div class="logo-container">
+      <div class="logo-circle"></div>
+      <span class="logo-text">Cinemaniacs Hub</span>
+    </div>
+    <span class="live-badge"><span class="live-dot"></span>LIVE</span>
+  </header>
 
+  <div class="wrap">
     <div class="player-box">
       <video id="player" playsinline preload="metadata" controls>
         <source src="{{file_url}}">
@@ -755,6 +757,23 @@
           sep.className = 'time-sep';
           sep.textContent = '/';
           dur.parentNode.insertBefore(sep, dur);
+        }
+
+        // Plyr wraps the <video> in its own ".plyr" element and that is the
+        // element that actually goes fullscreen — not our outer .player-box.
+        // Anything left outside .plyr (loading spinner, seek zones) is
+        // invisible and untappable once fullscreen starts, and taps then
+        // land on the raw video, which is what was toggling fullscreen off
+        // on a double-tap. Move all overlay UI inside .plyr so it travels
+        // into fullscreen with the video.
+        const plyrEl = document.querySelector('.plyr');
+        const loadingUI = document.getElementById('mediaLoadingUI');
+        const seekLeftEl = document.getElementById('seekLeft');
+        const seekRightEl = document.getElementById('seekRight');
+        if (plyrEl) {
+          if (loadingUI) plyrEl.appendChild(loadingUI);
+          if (seekLeftEl) plyrEl.appendChild(seekLeftEl);
+          if (seekRightEl) plyrEl.appendChild(seekRightEl);
         }
       });
 
