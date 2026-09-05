@@ -12,10 +12,6 @@ from Deendayal_botz.Bot import DeendayalBot
 from Deendayal_botz.util.file_properties import get_file_ids
 from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 
-# Port your aiohttp server is actually listening on. If your info.py
-# exposes a different name for this (e.g. WEB_SERVER_PORT), change the
-# import below to match — this MUST be the same port stream_handler
-# is bound to, since ffmpeg will hit http://127.0.0.1:<this>/... directly.
 from info import PORT as LOCAL_PORT
 LOCAL_PORT = int(LOCAL_PORT)
 
@@ -26,40 +22,18 @@ _file_cache = {}
 _extract_locks = {}
 _inflight = {}
 
-# Files are no longer kept as a persistent cache — every extraction is
-# written to a temp file, streamed, and deleted the moment it's been sent
-# (or the moment it's superseded by a seek/track-switch/drift refetch).
-# This loop is just a safety net for anything left behind by a crash.
 CACHE_MAX_AGE_SECONDS = 30 * 60
 CACHE_MIN_FREE_BYTES = 1 * 1024 ** 3
 
-# MUST match AUDIO_WINDOW_SECONDS in the player page.
+# MUST match AUDIO_WINDOW_SECONDS in the player page
 AUDIO_WINDOW_SECONDS = 600
 
-# There is no seek bucket any more. The browser cannot seek inside this
-# response: it is chunked, it has no Content-Length and it cannot serve Range,
-# so Chrome reports seekable = [0,0] and any currentTime write resets the
-# element to zero. The player therefore plays every window from 0 and asks us
-# to start at the EXACT position it needs. Rounding the start would put the
-# audio out of step by exactly the rounding error.
-
-# Slack for the accurate trim below. ffmpeg's input -ss lands on the nearest
-# cluster BEFORE the requested time, and an mkv cluster can be several seconds
-# long. We seek this far early on the input, then trim the slack off on the
-# output side, where the cut is exact to one AAC frame (~21 ms).
 SEEK_PAD_SECONDS = 10
-
-# Codecs we can stream-copy into ADTS without re-encoding.
 COPYABLE_AUDIO = {"aac", "mp4a"}
-
-# Set True if your ffmpeg is old and output-side -ss does not trim a stream
-# copy. Re-encoding is always accurate, it only costs CPU.
 FORCE_ENCODE = False
 
 
 def _round_start(start_time: float) -> float:
-    """Keep the exact position. Millisecond resolution is enough to key the
-    cache and is far below what anyone can hear."""
     if not start_time or start_time < 0:
         return 0.0
     return round(float(start_time), 3)
@@ -70,9 +44,6 @@ def _meta(msg_id: int) -> dict:
 
 
 async def _get_file_id(msg_id: int, secure_hash: str):
-    """Validates the hash and confirms the file exists before we ask
-    ffmpeg/ffprobe to go fetch it — lets us fail fast with the right
-    HTTP error (403/404) instead of an opaque ffmpeg failure."""
     file_id = await get_file_ids(DeendayalBot, LOG_CHANNEL, msg_id)
     if not file_id:
         raise FIleNotFound
@@ -82,11 +53,6 @@ async def _get_file_id(msg_id: int, secure_hash: str):
 
 
 def _internal_stream_url(msg_id: int, secure_hash: str) -> str:
-    """Points at your own stream_handler route (the one that already
-    serves Range requests). ffmpeg reads from this like a browser would —
-    it can jump straight to a byte offset instead of reading from the
-    start. Must match the path shape parse_id_hash() expects:
-    <6-char hash><numeric id>, no separator."""
     return f"http://127.0.0.1:{LOCAL_PORT}/{secure_hash}{msg_id}"
 
 
@@ -109,7 +75,7 @@ async def get_tracks(msg_id: int, secure_hash: str) -> list:
     process = await asyncio.create_subprocess_exec(
         "ffprobe", "-v", "quiet", "-print_format", "json",
         "-show_streams", "-select_streams", "a",
-        "-timeout", "15000000",  # 15s, in microseconds
+        "-timeout", "15000000",
         "-i", internal_url,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
@@ -139,22 +105,12 @@ async def get_tracks(msg_id: int, secure_hash: str) -> list:
     return tracks
 
 
-def _temp_audio_path(msg_id: int, stream_index: int, bucket_start: int) -> Path:
-    """Unique per-request temp file. Not a cache — deleted as soon as it's
-    sent, or immediately if a newer request for this track supersedes it."""
+def _temp_audio_path(msg_id: int, stream_index: int, bucket_start: float) -> Path:
     return TEMP_DIR / f"{msg_id}_t{stream_index}_s{bucket_start:.3f}_w{AUDIO_WINDOW_SECONDS}.part.aac"
 
 
 def _build_ffmpeg_cmd(internal_url: str, stream_index: int, bucket_start: float,
                       use_copy: bool, out_path: Path) -> list:
-    """One command shape for both codecs.
-
-    -ss before -i  : fast seek, but it lands on the cluster before the target
-                     and, on a stream copy, KEEPS everything from there on.
-    -ss after  -i  : exact trim, at AAC frame granularity.
-    Using both gives a fast seek AND an exact start. Measured error: under
-    20 ms, against up to 9 s for the plain -ss-before-only stream copy.
-    """
     pad = min(bucket_start, float(SEEK_PAD_SECONDS))
     input_ss = bucket_start - pad
 
@@ -175,8 +131,6 @@ def _build_ffmpeg_cmd(internal_url: str, stream_index: int, bucket_start: float,
     if pad > 0:
         cmd += ["-ss", f"{pad:.3f}"]
 
-    # Without -t, ffmpeg extracts from here to the END of the movie. That is
-    # ~80 MB and minutes of work for a single track switch.
     cmd += ["-t", str(AUDIO_WINDOW_SECONDS)]
 
     if use_copy:
@@ -212,11 +166,6 @@ def _delete_file(path: Path, reason: str):
 
 
 def _destroy_previous(msg_id: int, stream_index: int, keep_bucket: float):
-    """Kill and delete every other in-progress or leftover download for this
-    (msg_id, stream_index) that isn't the bucket we're about to serve.
-    Called at the start of every new request for this track — a seek, a
-    language switch, or a drift refetch — so nothing keeps downloading or
-    sitting on disk once it's no longer needed."""
     for key, job in list(_inflight.items()):
         m, s, b = key
         if m == msg_id and s == stream_index and b != keep_bucket:
@@ -224,8 +173,6 @@ def _destroy_previous(msg_id: int, stream_index: int, keep_bucket: float):
             _delete_file(job["tmp_out"], reason="superseded")
             _inflight.pop(key, None)
 
-    # Safety net: any leftover temp file on disk for this track that isn't
-    # the current bucket (e.g. left behind by a crash before this change).
     prefix = f"{msg_id}_t{stream_index}_s"
     for f in TEMP_DIR.glob(f"{prefix}*_w{AUDIO_WINDOW_SECONDS}*.aac"):
         if f"_s{keep_bucket:.3f}_" not in f.name:
@@ -233,29 +180,15 @@ def _destroy_previous(msg_id: int, stream_index: int, keep_bucket: float):
 
 
 async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int, start_time: float = 0.0):
-    """
-    Stream AUDIO_WINDOW_SECONDS of audio starting exactly at start_time.
-    ffmpeg fetches the source itself over HTTP (Range-capable), so seeking
-    to any point costs roughly the same regardless of how far into the
-    file it is. The player asks for the next window before this one ends.
-
-    Nothing here is kept as a persistent cache: the extracted window is
-    streamed straight from its temp file and deleted the moment it's been
-    sent, and any older in-flight download for this track is killed and
-    deleted the instant a newer request (seek/switch/drift-refetch) comes
-    in for the same track.
-    """
     bucket_start = _round_start(start_time)
     key = (msg_id, stream_index, bucket_start)
 
-    # Anything else in flight for this track is now stale — kill it first.
     _destroy_previous(msg_id, stream_index, bucket_start)
 
     existing = _inflight.get(key)
     if existing is not None:
         return _stream_from_inflight(existing)
 
-    # Ensure we know codec (for copy vs encode)
     entry = _meta(msg_id)
     if entry.get("tracks") is None:
         try:
@@ -265,6 +198,7 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
 
     codec = _codec_for_stream(msg_id, stream_index)
     use_copy = (not FORCE_ENCODE) and codec in COPYABLE_AUDIO
+
     logging.info(
         f"[AudioTracks] extract msg={msg_id} stream={stream_index} "
         f"codec={codec or 'unknown'} mode={'copy' if use_copy else 'encode'} "
@@ -303,20 +237,14 @@ async def extract_audio_stream(msg_id: int, secure_hash: str, stream_index: int,
 
         async def finalize():
             _, stderr = await proc.communicate()
-            # If this key is gone from _inflight, _destroy_previous already
-            # killed and cleaned this job up because a newer request (seek,
-            # switch, drift refetch) superseded it. That is expected — log it
-            # as superseded, not as an ffmpeg failure.
             if key not in _inflight:
                 job["done"].set()
                 return
             ok = proc.returncode == 0 and tmp_out.exists() and tmp_out.stat().st_size > 0
             job["ok"] = ok
             if not ok:
-                logging.error(f"[AudioTracks] ffmpeg extraction failed: {stderr[:300]!r}")
+                logging.error(f"[AudioTracks] ffmpeg extraction failed: {stderr[:400]!r}")
             job["done"].set()
-            # NOTE: do not pop from _inflight here if the file still needs to
-            # be streamed out — the generator pops it once it's done reading.
 
         asyncio.create_task(finalize())
 
@@ -331,6 +259,8 @@ def cancel_inflight(msg_id: int, stream_index: int, start_time: float = None):
         if start_time is not None and b != _round_start(start_time):
             continue
         _kill_job(job, reason="cancel_inflight")
+        _delete_file(job["tmp_out"], reason="cancel_inflight")
+        _inflight.pop(key, None)
 
 
 def _stream_from_inflight(job: dict):
@@ -349,16 +279,23 @@ def _stream_from_inflight(job: dict):
                         sent += len(chunk)
                         yield chunk
                         continue
+
                 if job["done"].is_set():
+                    # Final check for remaining data
+                    if tmp_out.exists():
+                        with open(tmp_out, "rb") as f:
+                            f.seek(sent)
+                            remaining = f.read()
+                        if remaining:
+                            yield remaining
                     break
-                await asyncio.sleep(0.15)
+
+                await asyncio.sleep(0.12)
         except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
-            logging.info("[AudioTracks] client disconnected mid-stream (live extraction)")
+            logging.info("[AudioTracks] client disconnected mid-stream")
         except Exception as e:
             logging.error(f"[AudioTracks] live-stream read error: {e}")
         finally:
-            # Whether it finished, failed, or the client disconnected: this
-            # temp file's job is done, so it never sits on disk afterward.
             _inflight.pop(key, None)
             _delete_file(job["tmp_out"], reason="sent")
 
@@ -371,9 +308,6 @@ def _dir_free_bytes(path: Path) -> int:
 
 
 async def cleanup_audio_cache():
-    """Safety net only. Normal operation deletes every temp file right after
-    it's streamed or right after it's superseded, so this should rarely find
-    anything — it exists to mop up files left behind by a crash."""
     now = time.time()
     files = sorted(TEMP_DIR.glob("*"), key=lambda p: p.stat().st_mtime if p.exists() else 0)
     for f in list(files):
