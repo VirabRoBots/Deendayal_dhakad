@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
   <style>
     :root {
       --ember: #e33d3d;
@@ -41,7 +42,6 @@
     @keyframes bgPulse { from { opacity: .8; } to { opacity: 1.2; } }
     .wrap { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 16px; }
 
-    /* ---------- Header ---------- */
     header {
       display: flex; align-items: center;
       padding: 8px 16px; gap: 12px;
@@ -65,7 +65,6 @@
     .live-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; animation: pulseDot 1.4s ease infinite; }
     @keyframes pulseDot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(.65); } }
 
-    /* ---------- Player ---------- */
     .player-box {
       position: relative; border-radius: var(--r); overflow: hidden; background: #000;
       box-shadow: 0 20px 50px rgba(0,0,0,.45); border: 1px solid var(--border);
@@ -108,12 +107,10 @@
     .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; letter-spacing: .5px; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ---------- File card ---------- */
     .file-card { margin-top: 16px; background: var(--glass); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; backdrop-filter: blur(10px); }
     .file-title { font-family: var(--font-head); font-weight: 600; font-size: 1rem; line-height: 1.4; word-break: break-word; margin-bottom: 6px; }
     .file-meta { color: var(--muted); font-size: .85rem; }
 
-    /* ---------- Like / Dislike / Report ---------- */
     .feedback-bar { margin-top: 14px; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; }
     .feedback-row { display: flex; gap: 10px; align-items: center; }
     .fb-btn {
@@ -126,11 +123,9 @@
     .fb-btn.report:hover { color: var(--ember); border-color: var(--ember-border); }
     .fb-btn.icon-only { padding: 8px 12px; }
 
-    /* ---------- Inline expand panels (shared) ---------- */
     .inline-panel { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
     .inline-panel.open { display: block; }
 
-    /* ---------- Media bar (audio / subtitles) ---------- */
     .media-bar { margin-top: 14px; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
     .media-buttons { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
     .media-bar .label { font-size: .8rem; color: var(--muted); font-weight: 600; letter-spacing: .4px; margin-right: 4px; }
@@ -155,7 +150,6 @@
     .switch input:checked + .switch-track { background: var(--ember); }
     .switch input:checked + .switch-track::before { transform: translateX(18px); }
 
-    /* ---------- Actions / external player ---------- */
     .actions { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
     .btn {
       display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 14px; border-radius: 12px;
@@ -192,16 +186,18 @@
     .ext-panel { display: none; }
     .ext-panel.active { display: block; }
 
-    /* ---------- Report ---------- */
     .report-wrap { margin-top: 14px; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
     .report-option { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 8px; cursor: pointer; font-size: .88rem; color: var(--text); transition: .15s ease; }
     .report-option:hover { border-color: var(--ember-border); background: var(--ember-dim); }
     .report-option.active { border-color: var(--ember); color: var(--ember); background: var(--ember-dim); }
     .report-submit { margin-top: 4px; width: 100%; padding: 12px; border-radius: 10px; border: none; background: linear-gradient(135deg, var(--ember), #7a1f1f); color: #fff; font-weight: 700; font-size: .9rem; cursor: pointer; }
 
-    /* ---------- Note ---------- */
     .note { margin-top: 16px; padding: 12px 14px; border-left: 3px solid var(--ember); background: var(--ember-dim); border-radius: 0 10px 10px 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
     footer { margin-top: 28px; text-align: center; color: #6b5f5c; font-size: .75rem; padding-bottom: 24px; }
+
+    /* Cast button style */
+    .plyr__control[data-plyr="cast"] i,
+    .cast-btn i { font-size: 1.1rem; }
   </style>
 </head>
 <body>
@@ -349,16 +345,6 @@
     const REFETCH_DRIFT = 1.5;
     const SEAM_LEAD = 0.25;
 
-    /* ------------------------------------------------------------------
-       Why this file never sets currentTime on an audio element.
-       /audio/ is a live chunked response with no Content-Length and no
-       Range support. Chrome reports seekable = [0,0] even though
-       buffered = [0, 600], so writing currentTime jumps back to zero.
-       Audio is never seeked: the server starts the track at the exact
-       position needed, the element plays from 0, drift is trimmed with
-       playbackRate, and anything needing a seek asks for fresh audio.
-       ------------------------------------------------------------------ */
-
     let player = null;
     let activeAudio = null;
     let activeTrackIdx = null;
@@ -374,7 +360,8 @@
     let useFallbackMute = false;
     let audioRequestId = 0;
     let seekDebounceTimer = null;
-    let audioMode = 'pending'; // 'pending' | 'none' | 'list'
+    let audioMode = 'pending';
+    let subtitleTracks = [];
 
     function buildAudioUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
@@ -387,6 +374,18 @@
       const u = new URL(STREAM_URL, window.location.origin);
       const pathParts = u.pathname.split('/').filter(Boolean);
       u.pathname = '/api/tracks/' + pathParts.join('/');
+      return u.toString();
+    }
+    function buildSubtitlesUrl() {
+      const u = new URL(STREAM_URL, window.location.origin);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/api/subtitles/' + pathParts.join('/');
+      return u.toString();
+    }
+    function buildSubtitleFileUrl(index) {
+      const u = new URL(STREAM_URL, window.location.origin);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/subtitles/' + index + '/' + pathParts.join('/');
       return u.toString();
     }
 
@@ -549,7 +548,6 @@
       });
     }
 
-    /* -------- Audio button: hidden until tracks are fetched -------- */
     function renderAudioList(tracks) {
       const btn = document.getElementById('btnAudio');
       const panel = document.getElementById('audioPanel');
@@ -567,10 +565,74 @@
       });
     }
 
+    /* -------- Working Subtitles -------- */
+    function renderSubtitles(tracks) {
+      subtitleTracks = tracks || [];
+      const panel = document.getElementById('subsPanel');
+      const toggle = document.getElementById('subsToggle');
+      const btn = document.getElementById('btnSubs');
+
+      // Clear previous language items
+      panel.querySelectorAll('.lang-item').forEach(el => el.remove());
+
+      if (!tracks || tracks.length === 0) {
+        toggle.disabled = true;
+        btn.classList.remove('show');
+        return;
+      }
+
+      btn.classList.add('show');
+      toggle.disabled = false;
+
+      tracks.forEach(function (track, idx) {
+        const item = document.createElement('div');
+        item.className = 'lang-item';
+        item.textContent = trackLabel(track) || track.label || ('Subtitle ' + (idx + 1));
+        item.dataset.index = idx;
+
+        item.onclick = function () {
+          if (!player) return;
+          // Remove existing tracks
+          const vid = getVideo();
+          while (vid.querySelectorAll('track').length) {
+            vid.querySelector('track').remove();
+          }
+          // Add selected track
+          const trackEl = document.createElement('track');
+          trackEl.kind = 'captions';
+          trackEl.label = item.textContent;
+          trackEl.srclang = (track.tags && track.tags.language) || 'en';
+          trackEl.src = track.url || buildSubtitleFileUrl(track.index || idx);
+          trackEl.default = true;
+          vid.appendChild(trackEl);
+
+          // Force Plyr to pick it up
+          setTimeout(function () {
+            player.currentTrack = 0;
+            player.toggleCaptions(true);
+            toggle.checked = true;
+            panel.querySelectorAll('.lang-item').forEach(el => el.classList.remove('active'));
+            item.classList.add('active');
+          }, 300);
+        };
+        panel.appendChild(item);
+      });
+    }
+
+    document.getElementById('subsToggle').addEventListener('change', function () {
+      if (!player) return;
+      if (this.checked) {
+        player.toggleCaptions(true);
+      } else {
+        player.toggleCaptions(false);
+      }
+    });
+
     function toggleInline(btn, panel, others) {
       const isOpen = panel.classList.contains('open');
       others.forEach(function (p) { p.panel.classList.remove('open'); p.btn.classList.remove('open'); });
       if (!isOpen) { panel.classList.add('open'); btn.classList.add('open'); }
+      else { panel.classList.remove('open'); btn.classList.remove('open'); }
     }
 
     const audioBtn = document.getElementById('btnAudio');
@@ -586,8 +648,6 @@
     subsBtn.addEventListener('click', function () {
       toggleInline(subsBtn, subsPanel, [{ btn: audioBtn, panel: audioPanel }]);
     });
-    // Dummy subtitle toggle — no real subtitle track wired up yet.
-    document.getElementById('subsToggle').addEventListener('change', function () {});
 
     /* -------- Like / Dislike -------- */
     (function () {
@@ -612,7 +672,7 @@
       render();
     })();
 
-    /* -------- Report (inline) -------- */
+    /* -------- Report -------- */
     (function () {
       const btn = document.getElementById('btnReport');
       const panel = document.getElementById('reportPanel');
@@ -636,7 +696,7 @@
       });
     })();
 
-    /* -------- Download (inline) -------- */
+    /* -------- Download -------- */
     (function () {
       const btn = document.getElementById('btnDownload');
       const panel = document.getElementById('dlPanel');
@@ -657,14 +717,13 @@
       });
     })();
 
-    /* -------- External player (inline) -------- */
+    /* -------- External player -------- */
     (function () {
       const btn = document.getElementById('btnExternal');
       const panel = document.getElementById('extPanel');
       const tabs = document.querySelectorAll('.ext-tab');
       const panels = document.querySelectorAll('.ext-panel');
       btn.classList.add('open');
-      // Always expanded — button just scrolls it into view instead of toggling.
       btn.addEventListener('click', function () {
         panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       });
@@ -715,21 +774,21 @@
     })();
 
     function copyLink() {
+      const pageUrl = window.location.href;
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied!'); }).catch(function () { prompt('Copy this link:', STREAM_URL); });
-      } else prompt('Copy this link:', STREAM_URL);
+        navigator.clipboard.writeText(pageUrl).then(function () { alert('Link copied!'); }).catch(function () { prompt('Copy this link:', pageUrl); });
+      } else prompt('Copy this link:', pageUrl);
     }
 
-    /* -------- Share -------- */
+    /* -------- Share (uses page URL) -------- */
     document.getElementById('btnShare').addEventListener('click', function () {
       if (navigator.share) {
-        navigator.share({ title: '{{file_name}}', url: STREAM_URL }).catch(function () {});
+        navigator.share({ title: '{{file_name}}', url: window.location.href }).catch(function () {});
       } else {
         copyLink();
       }
     });
 
-    /* -------- Fullscreen → force landscape (where supported) -------- */
     function lockLandscape() {
       try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(function () {}); } catch (e) {}
     }
@@ -737,14 +796,68 @@
       try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
     }
 
+    /* -------- Chromecast -------- */
+    window['__onGCastApiAvailable'] = function(isAvailable) {
+      if (!isAvailable) return;
+
+      const context = cast.framework.CastContext.getInstance();
+      context.setOptions({
+        receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+        autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+      });
+
+      const castBtn = document.createElement('button');
+      castBtn.className = 'plyr__control cast-btn';
+      castBtn.type = 'button';
+      castBtn.innerHTML = '<i class="fa-solid fa-cast"></i>';
+      castBtn.title = 'Cast';
+      castBtn.setAttribute('aria-label', 'Cast');
+
+      castBtn.addEventListener('click', function () {
+        const session = context.getCurrentSession();
+        if (session) {
+          session.endSession(true);
+          return;
+        }
+        context.requestSession().then(function () {
+          const mediaInfo = new chrome.cast.media.MediaInfo(STREAM_URL, 'video/mp4');
+          mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+          mediaInfo.metadata.title = '{{file_name}}';
+          const request = new chrome.cast.media.LoadRequest(mediaInfo);
+          context.getCurrentSession().loadMedia(request).catch(function(e) {
+            console.warn('Cast load failed', e);
+          });
+        }).catch(function () {});
+      });
+
+      // Insert Cast button after player is ready
+      function insertCastButton() {
+        const controls = document.querySelector('.plyr__controls');
+        if (!controls) return;
+        const settingsBtn = controls.querySelector('[data-plyr="settings"]');
+        if (settingsBtn && !controls.querySelector('.cast-btn')) {
+          settingsBtn.parentNode.insertBefore(castBtn, settingsBtn.nextSibling);
+        }
+      }
+
+      if (player) {
+        player.on('ready', insertCastButton);
+      } else {
+        document.addEventListener('DOMContentLoaded', function() {
+          setTimeout(insertCastButton, 800);
+        });
+      }
+    };
+
     document.addEventListener('DOMContentLoaded', function () {
       showLoadingUI(true, 'Loading…');
 
       player = new Plyr('#player', {
-        controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'settings', 'fullscreen'],
-        settings: ['speed'],
+        controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'captions', 'settings', 'airplay', 'fullscreen'],
+        settings: ['captions', 'speed'],
         speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
-        seekTime: 10
+        seekTime: 10,
+        captions: { active: false, language: 'auto', update: true }
       });
 
       player.on('ready', function () {
@@ -759,13 +872,6 @@
           dur.parentNode.insertBefore(sep, dur);
         }
 
-        // Plyr wraps the <video> in its own ".plyr" element and that is the
-        // element that actually goes fullscreen — not our outer .player-box.
-        // Anything left outside .plyr (loading spinner, seek zones) is
-        // invisible and untappable once fullscreen starts, and taps then
-        // land on the raw video, which is what was toggling fullscreen off
-        // on a double-tap. Move all overlay UI inside .plyr so it travels
-        // into fullscreen with the video.
         const plyrEl = document.querySelector('.plyr');
         const loadingUI = document.getElementById('mediaLoadingUI');
         const seekLeftEl = document.getElementById('seekLeft');
@@ -781,10 +887,9 @@
       player.on('exitfullscreen', unlockOrientation);
       player.on('volumechange', syncVolume);
 
-      /* -------- Tap zones: single tap play/pause, double tap seek ±10s -------- */
+      /* Tap zones */
       (function () {
         const vid = getVideo();
-        // Stop the browser's native double-tap-to-fullscreen on <video>.
         vid.style.touchAction = 'manipulation';
         vid.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); });
 
@@ -800,7 +905,6 @@
             if (tapCount === 1) {
               tapTimer = setTimeout(function () {
                 if (tapCount === 1) {
-                  // Single tap: toggle play/pause.
                   if (player.playing) player.pause(); else player.play();
                 }
                 tapCount = 0;
@@ -808,7 +912,6 @@
             } else if (tapCount === 2) {
               clearTimeout(tapTimer);
               tapCount = 0;
-              // Double tap: seek 10s in the given direction.
               const newTime = Math.max(0, Math.min(vid.duration || Infinity, vid.currentTime + direction * 10));
               vid.currentTime = newTime;
               flash.classList.add('show');
@@ -827,10 +930,17 @@
         if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') { e.preventDefault(); e.stopPropagation(); }
       }, true);
 
+      // Load audio tracks
       fetch(buildTracksUrl())
         .then(function (r) { return r.json(); })
         .then(function (tracks) { renderAudioList(tracks); })
         .catch(function () { renderAudioList([]); });
+
+      // Load subtitle tracks
+      fetch(buildSubtitlesUrl())
+        .then(function (r) { return r.json(); })
+        .then(function (tracks) { renderSubtitles(tracks); })
+        .catch(function () { renderSubtitles([]); });
 
       const vid = getVideo();
       if (!vid) return;
