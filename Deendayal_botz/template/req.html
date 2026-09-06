@@ -106,10 +106,13 @@
       line-height: 1;
       margin: 0;
     }
-    .plyr--playing:not(.plyr--hide-controls) .plyr__control--overlaid {
-      opacity: 1 !important;
-      visibility: visible !important;
-      pointer-events: auto !important;
+    /* FIX: added :not(.controls-locked) so the center play/pause button
+       correctly hides during loading even while .plyr--playing is set
+       (previously this rule's !important + source order beat the lock,
+       so the button stayed visible/clickable whenever loading kicked in
+       mid-playback). */
+    .plyr--playing:not(.plyr--hide-controls):not(.controls-locked) .plyr__control--overlaid {
+      opacity: 1 !important; visibility: visible !important; pointer-events: auto !important;
     }
 
     .center-seek-btn {
@@ -450,18 +453,31 @@
       return u.toString();
     }
 
+    // FIXED: the old version tried to guess whether timestamps were
+    // "already absolute" by checking if the first cue was past 30 seconds,
+    // and skipped shifting if so. That guess was wrong whenever a chunk's
+    // first line of dialogue came more than 30s into the window (very
+    // common), silently leaving cues at their in-window time while the
+    // video had already moved an hour past that point — so nothing ever
+    // rendered.
+    //
+    // It also only matched HH:MM:SS.mmm timestamps, but ffmpeg's webvtt
+    // muxer writes plain MM:SS.mmm for any cue under one hour — which is
+    // every single windowed chunk this backend produces (10-minute
+    // windows). So the old regex silently failed to match at all on real
+    // output, and shifting never happened regardless of the 30s guess.
+    //
+    // Fix: match both MM:SS.mmm and HH:MM:SS.mmm (hours group optional),
+    // and always shift by the requested offset — no guessing.
     function shiftVttTimestamps(vttText, offset) {
       if (!offset || Math.abs(offset) < 0.001) return vttText;
-      // Only shift if the VTT looks relative (first cue starts near 0)
-      const firstMatch = vttText.match(/(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->/);
-      if (firstMatch) {
-        const firstSec = (+firstMatch[1])*3600 + (+firstMatch[2])*60 + (+firstMatch[3]) + (+firstMatch[4])/1000;
-        if (firstSec > 30) return vttText; // already absolute
-      }
+
       return vttText.replace(
-        /(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/g,
+        /(?:(\d{2}):)?(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(?:(\d{2}):)?(\d{2}):(\d{2})\.(\d{3})/g,
         function (_, h1, m1, s1, ms1, h2, m2, s2, ms2) {
-          function toSec(h, m, s, ms) { return (+h)*3600 + (+m)*60 + (+s) + (+ms)/1000; }
+          function toSec(h, m, s, ms) {
+            return (+(h || 0)) * 3600 + (+m) * 60 + (+s) + (+ms) / 1000;
+          }
           function toTs(sec) {
             if (sec < 0) sec = 0;
             const h = Math.floor(sec / 3600);
@@ -684,7 +700,7 @@
       if (atTime == null) atTime = vid.currentTime || 0;
       atTime = Math.max(0, atTime);
 
-      // ★ Pause video + audio while loading subtitle
+      // Pause video + audio while loading subtitle
       const wasPlaying = !vid.paused;
       if (wasPlaying) {
         vid.pause();
