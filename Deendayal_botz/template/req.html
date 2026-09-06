@@ -41,7 +41,6 @@
     @keyframes bgPulse { from { opacity: .8; } to { opacity: 1.2; } }
     .wrap { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 16px; }
 
-    /* ---------- Header ---------- */
     header {
       display: flex; align-items: center;
       padding: 8px 16px; gap: 12px;
@@ -68,7 +67,6 @@
     * { -webkit-tap-highlight-color: transparent; }
     button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: none !important; box-shadow: none !important; }
 
-    /* ---------- Player ---------- */
     .player-box {
       position: relative; border-radius: var(--r); overflow: hidden; background: #000;
       box-shadow: 0 20px 50px rgba(0,0,0,.45); border: 1px solid var(--border);
@@ -153,12 +151,10 @@
     .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; letter-spacing: .5px; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ---------- File card ---------- */
     .file-card { margin-top: 16px; background: var(--glass); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; backdrop-filter: blur(10px); }
     .file-title { font-family: var(--font-head); font-weight: 600; font-size: 1rem; line-height: 1.4; word-break: break-word; margin-bottom: 6px; }
     .file-meta { color: var(--muted); font-size: .85rem; }
 
-    /* ---------- Like / Dislike / Report ---------- */
     .feedback-bar { margin-top: 14px; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; }
     .feedback-row { display: flex; gap: 10px; align-items: center; }
     .fb-btn {
@@ -171,11 +167,9 @@
     .fb-btn.report:hover { color: var(--ember); border-color: var(--ember-border); }
     .fb-btn.icon-only { padding: 8px 12px; }
 
-    /* ---------- Inline expand panels (shared) ---------- */
     .inline-panel { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
     .inline-panel.open { display: block; }
 
-    /* ---------- Media bar (audio / subtitles) ---------- */
     .media-bar { margin-top: 14px; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
     .media-buttons { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
     .media-bar .label { font-size: .8rem; color: var(--muted); font-weight: 600; letter-spacing: .4px; margin-right: 4px; }
@@ -200,7 +194,6 @@
     .switch input:checked + .switch-track { background: var(--ember); }
     .switch input:checked + .switch-track::before { transform: translateX(18px); }
 
-    /* ---------- Actions / external player ---------- */
     .actions { margin-top: 14px; display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
     .btn {
       display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 14px; border-radius: 12px;
@@ -237,7 +230,6 @@
     .ext-panel { display: none; }
     .ext-panel.active { display: block; }
 
-    /* ---------- Report ---------- */
     .report-wrap { margin-top: 14px; background: var(--glass); border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
     .report-option { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 8px; cursor: pointer; font-size: .88rem; color: var(--text); transition: .15s ease; }
     .report-other-box {
@@ -250,7 +242,6 @@
     .report-option.active { border-color: var(--ember); color: var(--ember); background: var(--ember-dim); }
     .report-submit { margin-top: 4px; width: 100%; padding: 12px; border-radius: 10px; border: none; background: linear-gradient(135deg, var(--ember), #7a1f1f); color: #fff; font-weight: 700; font-size: .9rem; cursor: pointer; }
 
-    /* ---------- Note ---------- */
     .note { margin-top: 16px; padding: 12px 14px; border-left: 3px solid var(--ember); background: var(--ember-dim); border-radius: 0 10px 10px 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
     footer { margin-top: 28px; text-align: center; color: #6b5f5c; font-size: .75rem; padding-bottom: 24px; }
   </style>
@@ -400,20 +391,10 @@
   <script>
     const STREAM_URL = "{{file_url}}";
     const AUDIO_WINDOW_SECONDS = 600;
-    const SUBTITLE_WINDOW_SECONDS = 600;   // MUST match backend
+    const SUBTITLE_WINDOW_SECONDS = 600;
     const ROLLOVER_LEAD = 45;
     const REFETCH_DRIFT = 1.5;
     const SEAM_LEAD = 0.25;
-
-    /* ------------------------------------------------------------------
-       Why this file never sets currentTime on an audio element.
-       /audio/ is a live chunked response with no Content-Length and no
-       Range support. Chrome reports seekable = [0,0] even though
-       buffered = [0, 600], so writing currentTime jumps back to zero.
-       Audio is never seeked: the server starts the track at the exact
-       position needed, the element plays from 0, drift is trimmed with
-       playbackRate, and anything needing a seek asks for fresh audio.
-       ------------------------------------------------------------------ */
 
     let player = null;
     let activeAudio = null;
@@ -430,12 +411,11 @@
     let useFallbackMute = false;
     let audioRequestId = 0;
     let seekDebounceTimer = null;
-    let audioMode = 'pending'; // 'pending' | 'none' | 'list'
-    let subMode = 'pending';   // 'pending' | 'none' | 'list'
+    let audioMode = 'pending';
+    let subMode = 'pending';
     let activeSubIdx = null;
     let currentTrackEl = null;
 
-    // Subtitle window state
     let subAnchor = 0;
     let subWindowEnd = 0;
     let subSeekDebounce = null;
@@ -470,29 +450,27 @@
       return u.toString();
     }
 
-    // Make FFmpeg's relative timestamps absolute
     function shiftVttTimestamps(vttText, offset) {
       if (!offset || Math.abs(offset) < 0.001) return vttText;
+      // Only shift if the VTT looks relative (first cue starts near 0)
+      const firstMatch = vttText.match(/(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->/);
+      if (firstMatch) {
+        const firstSec = (+firstMatch[1])*3600 + (+firstMatch[2])*60 + (+firstMatch[3]) + (+firstMatch[4])/1000;
+        if (firstSec > 30) return vttText; // already absolute
+      }
       return vttText.replace(
         /(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/g,
         function (_, h1, m1, s1, ms1, h2, m2, s2, ms2) {
-          function toSec(h, m, s, ms) {
-            return (+h) * 3600 + (+m) * 60 + (+s) + (+ms) / 1000;
-          }
+          function toSec(h, m, s, ms) { return (+h)*3600 + (+m)*60 + (+s) + (+ms)/1000; }
           function toTs(sec) {
             if (sec < 0) sec = 0;
             const h = Math.floor(sec / 3600);
             const m = Math.floor((sec % 3600) / 60);
             const s = Math.floor(sec % 60);
             const ms = Math.round((sec % 1) * 1000);
-            return String(h).padStart(2, '0') + ':' +
-                   String(m).padStart(2, '0') + ':' +
-                   String(s).padStart(2, '0') + '.' +
-                   String(ms).padStart(3, '0');
+            return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0')+'.'+String(ms).padStart(3,'0');
           }
-          const start = toSec(h1, m1, s1, ms1) + offset;
-          const end   = toSec(h2, m2, s2, ms2) + offset;
-          return toTs(start) + ' --> ' + toTs(end);
+          return toTs(toSec(h1,m1,s1,ms1)+offset) + ' --> ' + toTs(toSec(h2,m2,s2,ms2)+offset);
         }
       );
     }
@@ -662,7 +640,6 @@
       });
     }
 
-    /* -------- Audio button: hidden until tracks are fetched -------- */
     function renderAudioList(tracks) {
       const btn = document.getElementById('btnAudio');
       const panel = document.getElementById('audioPanel');
@@ -680,40 +657,23 @@
       });
     }
 
-    /* -------- Subtitles -------- */
     function clearSubtitleTrack() {
       const vid = getVideo();
       if (!vid) return;
-
-      Array.from(vid.textTracks || []).forEach(function (tt) {
-        tt.mode = 'disabled';
-      });
-
-      Array.from(vid.querySelectorAll('track[data-custom="1"]')).forEach(function (t) {
-        t.remove();
-      });
-
-      if (activeBlobUrl) {
-        try { URL.revokeObjectURL(activeBlobUrl); } catch (e) {}
-        activeBlobUrl = null;
-      }
-
+      Array.from(vid.textTracks || []).forEach(function (tt) { tt.mode = 'disabled'; });
+      Array.from(vid.querySelectorAll('track[data-custom="1"]')).forEach(function (t) { t.remove(); });
+      if (activeBlobUrl) { try { URL.revokeObjectURL(activeBlobUrl); } catch (e) {} activeBlobUrl = null; }
       currentTrackEl = null;
       activeSubIdx = null;
       subAnchor = 0;
       subWindowEnd = 0;
-
-      document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
-        el.classList.remove('active');
-      });
+      document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) { el.classList.remove('active'); });
     }
 
     function forceShowTrack(trackEl) {
       if (!trackEl || !trackEl.track) return;
       const vid = getVideo();
-      Array.from(vid.textTracks || []).forEach(function (tt) {
-        tt.mode = 'disabled';
-      });
+      Array.from(vid.textTracks || []).forEach(function (tt) { tt.mode = 'disabled'; });
       trackEl.track.mode = 'showing';
     }
 
@@ -723,6 +683,13 @@
 
       if (atTime == null) atTime = vid.currentTime || 0;
       atTime = Math.max(0, atTime);
+
+      // ★ Pause video + audio while loading subtitle
+      const wasPlaying = !vid.paused;
+      if (wasPlaying) {
+        vid.pause();
+        if (activeAudio && !activeAudio.paused) activeAudio.pause();
+      }
 
       clearSubtitleTrack();
       showLoadingUI(true, 'Loading subtitle…');
@@ -735,14 +702,9 @@
           return res.text();
         })
         .then(function (vttText) {
-          if (!vttText || vttText.trim().length < 10) {
-            throw new Error('Empty subtitle file');
-          }
-          if (vttText.trim().indexOf('WEBVTT') !== 0) {
-            vttText = 'WEBVTT\n\n' + vttText;
-          }
+          if (!vttText || vttText.trim().length < 10) throw new Error('Empty subtitle file');
+          if (vttText.trim().indexOf('WEBVTT') !== 0) vttText = 'WEBVTT\n\n' + vttText;
 
-          // Convert relative FFmpeg timestamps → absolute
           vttText = shiftVttTimestamps(vttText, atTime);
 
           const blob = new Blob([vttText], { type: 'text/vtt' });
@@ -760,12 +722,17 @@
           track.addEventListener('load', function () {
             forceShowTrack(track);
             showLoadingUI(false);
+            if (wasPlaying) {
+              vid.play().catch(function(){});
+              if (activeAudio) activeAudio.play().catch(function(){});
+            }
           });
           track.addEventListener('error', function () {
             showLoadingUI(false);
             alert('Failed to load subtitle track.');
             clearSubtitleTrack();
             document.getElementById('subsToggle').checked = false;
+            if (wasPlaying) vid.play().catch(function(){});
           });
 
           vid.appendChild(track);
@@ -777,7 +744,11 @@
           setTimeout(function () {
             forceShowTrack(track);
             showLoadingUI(false);
-          }, 800);
+            if (wasPlaying) {
+              vid.play().catch(function(){});
+              if (activeAudio) activeAudio.play().catch(function(){});
+            }
+          }, 900);
 
           document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
             el.classList.toggle('active', String(el.dataset.index) === String(streamIndex));
@@ -790,6 +761,7 @@
           alert('Failed to load subtitle: ' + (err.message || 'unknown error'));
           clearSubtitleTrack();
           document.getElementById('subsToggle').checked = false;
+          if (wasPlaying) vid.play().catch(function(){});
         });
     }
 
@@ -846,19 +818,13 @@
       toggleInline(subsBtn, subsPanel, [{ btn: audioBtn, panel: audioPanel }]);
     });
 
-    // Subtitle on/off toggle
     document.getElementById('subsToggle').addEventListener('change', function () {
       const checked = this.checked;
       const vid = getVideo();
       if (!vid) return;
-
       if (!checked) {
-        Array.from(vid.textTracks || []).forEach(function (tt) {
-          tt.mode = 'disabled';
-        });
-        document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
-          el.classList.remove('active');
-        });
+        Array.from(vid.textTracks || []).forEach(function (tt) { tt.mode = 'disabled'; });
+        document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) { el.classList.remove('active'); });
       } else {
         if (currentTrackEl && currentTrackEl.track) {
           forceShowTrack(currentTrackEl);
@@ -871,7 +837,6 @@
       }
     });
 
-    /* -------- Like / Dislike -------- */
     (function () {
       let likes = 0, dislikes = 0, state = null;
       const likeBtn = document.getElementById('btnLike');
@@ -894,7 +859,6 @@
       render();
     })();
 
-   /* -------- Report (inline) -------- */
     (function () {
       const btn = document.getElementById('btnReport');
       const panel = document.getElementById('reportPanel');
@@ -902,9 +866,7 @@
       const submitBtn = document.getElementById('submitReport');
       const otherBox = document.getElementById('reportOtherText');
       let selected = null;
-
       btn.addEventListener('click', function () { panel.classList.toggle('open'); });
-
       options.forEach(function (opt) {
         opt.addEventListener('click', function () {
           options.forEach(function (o) { o.classList.remove('active'); });
@@ -914,7 +876,6 @@
           if (selected !== 'Other') otherBox.value = '';
         });
       });
-
       submitBtn.addEventListener('click', function () {
         if (!selected) { alert('Please select a reason.'); return; }
         if (selected === 'Other' && !otherBox.value.trim()) { alert('Please add a comment describing the issue.'); return; }
@@ -927,7 +888,7 @@
         selected = null;
       });
     })();
-    /* -------- Download (inline) -------- */
+
     (function () {
       const btn = document.getElementById('btnDownload');
       const panel = document.getElementById('dlPanel');
@@ -935,7 +896,6 @@
         panel.classList.toggle('open');
         btn.classList.toggle('open', panel.classList.contains('open'));
       });
-
       function androidIntent(pkg) { return 'intent:' + STREAM_URL + '#Intent;action=android.intent.action.VIEW;type=video/*;package=' + pkg + ';end'; }
       const dmMap = {
         '1dm': function () { window.location.href = androidIntent('idm.internet.download.manager.plus'); },
@@ -948,14 +908,12 @@
       });
     })();
 
-    /* -------- External player (inline) -------- */
     (function () {
       const btn = document.getElementById('btnExternal');
       const panel = document.getElementById('extPanel');
       const tabs = document.querySelectorAll('.ext-tab');
       const panels = document.querySelectorAll('.ext-panel');
       btn.classList.add('open');
-      // Always expanded — button just scrolls it into view instead of toggling.
       btn.addEventListener('click', function () {
         panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       });
@@ -967,14 +925,12 @@
           document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
         });
       });
-
       function androidIntent(pkg) { return 'intent:' + STREAM_URL + '#Intent;action=android.intent.action.VIEW;type=video/*;package=' + pkg + ';end'; }
       function copyForDesktop(name) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(STREAM_URL).then(function () { alert('Link copied! Open ' + name + ' and paste the link (Ctrl+O / open URL).'); });
         } else { prompt('Copy this link and open it in ' + name + ':', STREAM_URL); }
       }
-
       const actionsMap = {
         'vlc-desktop': function () { window.location.href = 'vlc://' + STREAM_URL.replace(/^https?:\/\//, ''); },
         'potplayer': function () { copyForDesktop('PotPlayer'); },
@@ -999,7 +955,6 @@
         'nplayer-ios': function () { window.location.href = STREAM_URL.replace(/^https?:\/\//, 'nplayer-$&').replace('nplayer-https://', 'nplayer-http://'); },
         'iina-ios': function () { copyForDesktop('IINA'); }
       };
-
       document.querySelectorAll('.ext-item').forEach(function (item) {
         item.addEventListener('click', function () { const fn = actionsMap[item.dataset.player]; if (fn) fn(); });
       });
@@ -1012,7 +967,6 @@
       } else prompt('Copy this link:', pageUrl);
     }
 
-    /* -------- Share -------- */
     document.getElementById('btnShare').addEventListener('click', function () {
       if (navigator.share) {
         navigator.share({ title: '{{file_name}}', url: window.location.href }).catch(function () {});
@@ -1021,7 +975,6 @@
       }
     });
 
-    /* -------- Fullscreen → force landscape (where supported) -------- */
     function lockLandscape() {
       try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(function () {}); } catch (e) {}
     }
@@ -1042,16 +995,9 @@
       player.on('ready', function () {
         var btn = document.querySelector('.plyr__control--overlaid');
         if (!btn) return;
-
         btn.innerHTML = '<i class="fa-solid fa-play"></i>';
-
-        player.on('play', function () {
-          btn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-        });
-
-        player.on('pause', function () {
-          btn.innerHTML = '<i class="fa-solid fa-play"></i>';
-        });
+        player.on('play', function () { btn.innerHTML = '<i class="fa-solid fa-pause"></i>'; });
+        player.on('pause', function () { btn.innerHTML = '<i class="fa-solid fa-play"></i>'; });
       });
 
       player.on('ready', function () {
@@ -1065,8 +1011,6 @@
           sep.textContent = '/';
           dur.parentNode.insertBefore(sep, dur);
         }
-
-        // Move overlay UI inside .plyr so it travels into fullscreen
         const plyrEl = document.querySelector('.plyr');
         const loadingUI = document.getElementById('mediaLoadingUI');
         const seekLeftEl = document.getElementById('seekLeft');
@@ -1086,35 +1030,21 @@
       player.on('exitfullscreen', unlockOrientation);
       player.on('volumechange', syncVolume);
 
-      /* -------- Tap zones: single tap play/pause, double tap seek ±10s -------- */
       (function () {
         const vid = getVideo();
-        // Stop the browser's native double-tap-to-fullscreen on <video>.
         vid.style.touchAction = 'manipulation';
         vid.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); });
-
         function setupZone(zoneId, flashId, direction) {
           const zone = document.getElementById(zoneId);
           const flash = document.getElementById(flashId);
-
           zone.addEventListener('dblclick', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            const newTime = Math.max(
-              0,
-              Math.min(vid.duration || Infinity, vid.currentTime + direction * 10)
-            );
-
+            e.preventDefault(); e.stopPropagation();
+            const newTime = Math.max(0, Math.min(vid.duration || Infinity, vid.currentTime + direction * 10));
             vid.currentTime = newTime;
             flash.classList.add('show');
-
-            setTimeout(function () {
-              flash.classList.remove('show');
-            }, 450);
+            setTimeout(function () { flash.classList.remove('show'); }, 450);
           });
         }
-
         setupZone('seekLeft', 'seekFlashLeft', -1);
         setupZone('seekRight', 'seekFlashRight', 1);
       })();
@@ -1134,13 +1064,11 @@
         if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') { e.preventDefault(); e.stopPropagation(); }
       }, true);
 
-      // Fetch audio tracks
       fetch(buildTracksUrl())
         .then(function (r) { return r.json(); })
         .then(function (tracks) { renderAudioList(tracks); })
         .catch(function () { renderAudioList([]); });
 
-      // Fetch subtitle tracks
       fetch(buildSubtitleTracksUrl())
         .then(function (r) { return r.json(); })
         .then(function (tracks) { renderSubtitleList(tracks); })
@@ -1165,14 +1093,13 @@
         seekDebounceTimer = setTimeout(function () { if (activeTrackIdx === null) return; requestAudio(activeTrackIdx, getVideo().currentTime); }, 400);
       });
 
-      // ===== Subtitle window management =====
+      // Subtitle window management
       vid.addEventListener('seeked', function () {
         if (activeSubIdx == null) return;
         if (subSeekDebounce) clearTimeout(subSeekDebounce);
         subSeekDebounce = setTimeout(function () {
           if (activeSubIdx == null) return;
           const t = vid.currentTime;
-          // Reload if we left the current window
           if (t < subAnchor - 5 || t > subWindowEnd - 30) {
             const labelEl = document.querySelector('#subsLangList .lang-item.active');
             const label = labelEl ? labelEl.textContent : 'Subtitle';
@@ -1181,7 +1108,6 @@
         }, 450);
       });
 
-      // Auto-roll to next subtitle window while playing
       setInterval(function () {
         if (activeSubIdx == null || !vid || vid.paused) return;
         const t = vid.currentTime;
