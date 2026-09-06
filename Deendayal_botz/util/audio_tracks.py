@@ -281,7 +281,6 @@ def _stream_from_inflight(job: dict):
                         continue
 
                 if job["done"].is_set():
-                    # Final check for remaining data
                     if tmp_out.exists():
                         with open(tmp_out, "rb") as f:
                             f.seek(sent)
