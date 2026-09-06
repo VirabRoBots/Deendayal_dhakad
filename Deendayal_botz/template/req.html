@@ -644,21 +644,43 @@
     }
 
     /* -------- Subtitles -------- */
+    let activeBlobUrl = null;
+
     function clearSubtitleTrack() {
       const vid = getVideo();
       if (!vid) return;
-      // Remove previously added track elements
+
+      // Hide all existing text tracks
+      Array.from(vid.textTracks || []).forEach(function (tt) {
+        tt.mode = 'disabled';
+      });
+
+      // Remove custom <track> elements
       Array.from(vid.querySelectorAll('track[data-custom="1"]')).forEach(function (t) {
         t.remove();
       });
+
+      if (activeBlobUrl) {
+        try { URL.revokeObjectURL(activeBlobUrl); } catch (e) {}
+        activeBlobUrl = null;
+      }
+
       currentTrackEl = null;
       activeSubIdx = null;
-      if (player && player.captions) {
-        try { player.currentTrack = -1; } catch (e) {}
-      }
+
       document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
         el.classList.remove('active');
       });
+    }
+
+    function forceShowTrack(trackEl) {
+      if (!trackEl || !trackEl.track) return;
+      // Disable every other track first
+      const vid = getVideo();
+      Array.from(vid.textTracks || []).forEach(function (tt) {
+        tt.mode = 'disabled';
+      });
+      trackEl.track.mode = 'showing';
     }
 
     function loadSubtitle(streamIndex, label, lang) {
@@ -666,45 +688,72 @@
       if (!vid) return;
 
       clearSubtitleTrack();
+      showLoadingUI(true, 'Loading subtitle…');
 
-      const track = document.createElement('track');
-      track.kind = 'captions';
-      track.label = label || 'Subtitle';
-      track.srclang = (lang || 'und').slice(0, 2);
-      track.src = buildSubtitleUrl(streamIndex);
-      track.default = true;
-      track.dataset.custom = '1';
-      track.dataset.index = streamIndex;
+      const url = buildSubtitleUrl(streamIndex);
 
-      track.addEventListener('load', function () {
-        // Enable the track
-        if (track.track) {
-          track.track.mode = 'showing';
-        }
-        if (player) {
-          try {
-            // Plyr: force captions on
-            player.currentTrack = 0;
-          } catch (e) {}
-        }
-      });
-      track.addEventListener('error', function () {
-        alert('Failed to load subtitle track.');
-        clearSubtitleTrack();
-        document.getElementById('subsToggle').checked = false;
-      });
+      // Fetch as blob so the track is same-origin (more reliable across browsers)
+      fetch(url)
+        .then(function (res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.text();
+        })
+        .then(function (vttText) {
+          // Basic sanity check
+          if (!vttText || vttText.trim().length < 10) {
+            throw new Error('Empty subtitle file');
+          }
+          // Ensure it starts with WEBVTT
+          if (vttText.trim().indexOf('WEBVTT') !== 0) {
+            vttText = 'WEBVTT\n\n' + vttText;
+          }
 
-      vid.appendChild(track);
-      currentTrackEl = track;
-      activeSubIdx = streamIndex;
+          const blob = new Blob([vttText], { type: 'text/vtt' });
+          activeBlobUrl = URL.createObjectURL(blob);
 
-      // Mark active in UI
-      document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
-        el.classList.toggle('active', String(el.dataset.index) === String(streamIndex));
-      });
+          const track = document.createElement('track');
+          track.kind = 'captions';
+          track.label = label || 'Subtitle';
+          track.srclang = (lang || 'und').slice(0, 2);
+          track.src = activeBlobUrl;
+          track.default = true;
+          track.dataset.custom = '1';
+          track.dataset.index = streamIndex;
 
-      // Turn toggle on
-      document.getElementById('subsToggle').checked = true;
+          track.addEventListener('load', function () {
+            forceShowTrack(track);
+            showLoadingUI(false);
+          });
+          track.addEventListener('error', function () {
+            showLoadingUI(false);
+            alert('Failed to load subtitle track.');
+            clearSubtitleTrack();
+            document.getElementById('subsToggle').checked = false;
+          });
+
+          vid.appendChild(track);
+          currentTrackEl = track;
+          activeSubIdx = streamIndex;
+
+          // Fallback: force show after a short delay even if 'load' event is late
+          setTimeout(function () {
+            forceShowTrack(track);
+            showLoadingUI(false);
+          }, 800);
+
+          // Mark active in UI
+          document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
+            el.classList.toggle('active', String(el.dataset.index) === String(streamIndex));
+          });
+          document.getElementById('subsToggle').checked = true;
+        })
+        .catch(function (err) {
+          console.error('Subtitle load error:', err);
+          showLoadingUI(false);
+          alert('Failed to load subtitle: ' + (err.message || 'unknown error'));
+          clearSubtitleTrack();
+          document.getElementById('subsToggle').checked = false;
+        });
     }
 
     function renderSubtitleList(tracks) {
@@ -767,31 +816,20 @@
       if (!vid) return;
 
       if (!checked) {
-        // Hide captions
-        Array.from(vid.textTracks).forEach(function (tt) {
-          tt.mode = 'hidden';
+        Array.from(vid.textTracks || []).forEach(function (tt) {
+          tt.mode = 'disabled';
         });
-        if (player) {
-          try { player.currentTrack = -1; } catch (e) {}
-        }
         document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
           el.classList.remove('active');
         });
-        activeSubIdx = null;
       } else {
-        // If a track was previously selected, re-show it
         if (currentTrackEl && currentTrackEl.track) {
-          currentTrackEl.track.mode = 'showing';
-          if (player) {
-            try { player.currentTrack = 0; } catch (e) {}
-          }
+          forceShowTrack(currentTrackEl);
           if (activeSubIdx != null) {
             document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
               el.classList.toggle('active', String(el.dataset.index) === String(activeSubIdx));
             });
           }
-        } else {
-          // No track loaded yet – just leave toggle on; user must pick a language
         }
       }
     });
@@ -958,9 +996,9 @@
       showLoadingUI(true, 'Loading…');
 
       player = new Plyr('#player', {
-        controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'captions', 'settings', 'fullscreen'],
-        settings: ['captions', 'speed'],
-        captions: { active: false, language: 'auto', update: true },
+        controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'settings', 'fullscreen'],
+        settings: ['speed'],
+        captions: { active: false, update: false },
         speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
         seekTime: 10
       });
