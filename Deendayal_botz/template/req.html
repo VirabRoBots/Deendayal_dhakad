@@ -400,6 +400,7 @@
   <script>
     const STREAM_URL = "{{file_url}}";
     const AUDIO_WINDOW_SECONDS = 600;
+    const SUBTITLE_WINDOW_SECONDS = 600;   // MUST match backend
     const ROLLOVER_LEAD = 45;
     const REFETCH_DRIFT = 1.5;
     const SEAM_LEAD = 0.25;
@@ -434,6 +435,12 @@
     let activeSubIdx = null;
     let currentTrackEl = null;
 
+    // Subtitle window state
+    let subAnchor = 0;
+    let subWindowEnd = 0;
+    let subSeekDebounce = null;
+    let activeBlobUrl = null;
+
     function buildAudioUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
       const pathParts = u.pathname.split('/').filter(Boolean);
@@ -453,11 +460,41 @@
       u.pathname = '/api/subtitles/' + pathParts.join('/');
       return u.toString();
     }
-    function buildSubtitleUrl(streamIndex) {
+    function buildSubtitleUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
       const pathParts = u.pathname.split('/').filter(Boolean);
       u.pathname = '/sub/' + streamIndex + '/' + pathParts.join('/');
+      if (atTime != null && atTime > 0) {
+        u.searchParams.set('t', Math.max(0, atTime).toFixed(3));
+      }
       return u.toString();
+    }
+
+    // Make FFmpeg's relative timestamps absolute
+    function shiftVttTimestamps(vttText, offset) {
+      if (!offset || Math.abs(offset) < 0.001) return vttText;
+      return vttText.replace(
+        /(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/g,
+        function (_, h1, m1, s1, ms1, h2, m2, s2, ms2) {
+          function toSec(h, m, s, ms) {
+            return (+h) * 3600 + (+m) * 60 + (+s) + (+ms) / 1000;
+          }
+          function toTs(sec) {
+            if (sec < 0) sec = 0;
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = Math.floor(sec % 60);
+            const ms = Math.round((sec % 1) * 1000);
+            return String(h).padStart(2, '0') + ':' +
+                   String(m).padStart(2, '0') + ':' +
+                   String(s).padStart(2, '0') + '.' +
+                   String(ms).padStart(3, '0');
+          }
+          const start = toSec(h1, m1, s1, ms1) + offset;
+          const end   = toSec(h2, m2, s2, ms2) + offset;
+          return toTs(start) + ' --> ' + toTs(end);
+        }
+      );
     }
 
     const LANG_MAP = {
@@ -644,18 +681,14 @@
     }
 
     /* -------- Subtitles -------- */
-    let activeBlobUrl = null;
-
     function clearSubtitleTrack() {
       const vid = getVideo();
       if (!vid) return;
 
-      // Hide all existing text tracks
       Array.from(vid.textTracks || []).forEach(function (tt) {
         tt.mode = 'disabled';
       });
 
-      // Remove custom <track> elements
       Array.from(vid.querySelectorAll('track[data-custom="1"]')).forEach(function (t) {
         t.remove();
       });
@@ -667,6 +700,8 @@
 
       currentTrackEl = null;
       activeSubIdx = null;
+      subAnchor = 0;
+      subWindowEnd = 0;
 
       document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
         el.classList.remove('active');
@@ -675,7 +710,6 @@
 
     function forceShowTrack(trackEl) {
       if (!trackEl || !trackEl.track) return;
-      // Disable every other track first
       const vid = getVideo();
       Array.from(vid.textTracks || []).forEach(function (tt) {
         tt.mode = 'disabled';
@@ -683,30 +717,33 @@
       trackEl.track.mode = 'showing';
     }
 
-    function loadSubtitle(streamIndex, label, lang) {
+    function loadSubtitle(streamIndex, label, lang, atTime) {
       const vid = getVideo();
       if (!vid) return;
+
+      if (atTime == null) atTime = vid.currentTime || 0;
+      atTime = Math.max(0, atTime);
 
       clearSubtitleTrack();
       showLoadingUI(true, 'Loading subtitle…');
 
-      const url = buildSubtitleUrl(streamIndex);
+      const url = buildSubtitleUrl(streamIndex, atTime);
 
-      // Fetch as blob so the track is same-origin (more reliable across browsers)
       fetch(url)
         .then(function (res) {
           if (!res.ok) throw new Error('HTTP ' + res.status);
           return res.text();
         })
         .then(function (vttText) {
-          // Basic sanity check
           if (!vttText || vttText.trim().length < 10) {
             throw new Error('Empty subtitle file');
           }
-          // Ensure it starts with WEBVTT
           if (vttText.trim().indexOf('WEBVTT') !== 0) {
             vttText = 'WEBVTT\n\n' + vttText;
           }
+
+          // Convert relative FFmpeg timestamps → absolute
+          vttText = shiftVttTimestamps(vttText, atTime);
 
           const blob = new Blob([vttText], { type: 'text/vtt' });
           activeBlobUrl = URL.createObjectURL(blob);
@@ -734,14 +771,14 @@
           vid.appendChild(track);
           currentTrackEl = track;
           activeSubIdx = streamIndex;
+          subAnchor = atTime;
+          subWindowEnd = atTime + SUBTITLE_WINDOW_SECONDS;
 
-          // Fallback: force show after a short delay even if 'load' event is late
           setTimeout(function () {
             forceShowTrack(track);
             showLoadingUI(false);
           }, 800);
 
-          // Mark active in UI
           document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
             el.classList.toggle('active', String(el.dataset.index) === String(streamIndex));
           });
@@ -1127,6 +1164,34 @@
         if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
         seekDebounceTimer = setTimeout(function () { if (activeTrackIdx === null) return; requestAudio(activeTrackIdx, getVideo().currentTime); }, 400);
       });
+
+      // ===== Subtitle window management =====
+      vid.addEventListener('seeked', function () {
+        if (activeSubIdx == null) return;
+        if (subSeekDebounce) clearTimeout(subSeekDebounce);
+        subSeekDebounce = setTimeout(function () {
+          if (activeSubIdx == null) return;
+          const t = vid.currentTime;
+          // Reload if we left the current window
+          if (t < subAnchor - 5 || t > subWindowEnd - 30) {
+            const labelEl = document.querySelector('#subsLangList .lang-item.active');
+            const label = labelEl ? labelEl.textContent : 'Subtitle';
+            loadSubtitle(activeSubIdx, label, '', t);
+          }
+        }, 450);
+      });
+
+      // Auto-roll to next subtitle window while playing
+      setInterval(function () {
+        if (activeSubIdx == null || !vid || vid.paused) return;
+        const t = vid.currentTime;
+        if (t > subWindowEnd - 45) {
+          const labelEl = document.querySelector('#subsLangList .lang-item.active');
+          const label = labelEl ? labelEl.textContent : 'Subtitle';
+          const nextStart = Math.floor(t / SUBTITLE_WINDOW_SECONDS) * SUBTITLE_WINDOW_SECONDS;
+          loadSubtitle(activeSubIdx, label, '', nextStart);
+        }
+      }, 2000);
 
       setInterval(function () {
         if (!activeAudio || isPreparingAudio) return;
