@@ -90,16 +90,17 @@ def _temp_sub_path(msg_id: int, stream_index: int) -> Path:
 
 
 def _build_ffmpeg_sub_cmd(internal_url: str, stream_index: int, out_path: Path) -> list:
-    """Extract one subtitle stream to WebVTT."""
+    """Extract one subtitle stream to WebVTT (works for srt, ass, ssa, mov_text, etc.)."""
     return [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-nostdin",
         "-seekable", "1",
         "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "2",
         "-timeout", "15000000",
-        "-probesize", "5M", "-analyzeduration", "5M",
+        "-probesize", "10M", "-analyzeduration", "10M",
         "-i", internal_url,
         "-map", f"0:{stream_index}",
         "-c:s", "webvtt",
+        "-f", "webvtt",
         str(out_path),
     ]
 
@@ -210,32 +211,26 @@ def _stream_from_inflight(job: dict):
 
     async def generator():
         tmp_out = job["tmp_out"]
-        sent = 0
         try:
-            # Wait until extraction finishes (or file appears)
-            while not job["done"].is_set():
-                if tmp_out.exists() and tmp_out.stat().st_size > sent:
-                    with open(tmp_out, "rb") as f:
-                        f.seek(sent)
-                        chunk = f.read(64 * 1024)
-                    if chunk:
-                        sent += len(chunk)
-                        yield chunk
-                await asyncio.sleep(0.15)
+            # Wait until ffmpeg fully finishes – browsers need a complete VTT
+            await job["done"].wait()
 
-            # Final flush
-            if tmp_out.exists():
-                with open(tmp_out, "rb") as f:
-                    f.seek(sent)
-                    remaining = f.read()
-                if remaining:
-                    yield remaining
+            if not job.get("ok") or not tmp_out.exists() or tmp_out.stat().st_size == 0:
+                logging.error("[SubtitleTracks] extraction failed or empty file")
+                return
+
+            with open(tmp_out, "rb") as f:
+                while True:
+                    chunk = f.read(64 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
         except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
             logging.info("[SubtitleTracks] client disconnected")
         except Exception as e:
             logging.error(f"[SubtitleTracks] stream error: {e}")
         finally:
-            # Keep the VTT on disk for a while (cheap & reusable)
+            # Keep the VTT on disk for reuse
             _inflight.pop(key, None)
 
     return generator()
