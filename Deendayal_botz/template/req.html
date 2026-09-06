@@ -64,9 +64,9 @@
     }
     .live-dot { width: 7px; height: 7px; background: var(--green); border-radius: 50%; animation: pulseDot 1.4s ease infinite; }
     @keyframes pulseDot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(.65); } }
- 
- * { -webkit-tap-highlight-color: transparent; }
-button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: none !important; box-shadow: none !important; }
+
+    * { -webkit-tap-highlight-color: transparent; }
+    button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: none !important; box-shadow: none !important; }
 
     /* ---------- Player ---------- */
     .player-box {
@@ -86,36 +86,35 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
     .plyr__time--duration { display: inline-flex !important; }
     .time-sep { color: var(--muted); margin: 0 4px; font-size: .85rem; }
     .plyr__menu__container [role="menu"] {
-  max-height: 100px !important;
-  overflow-y: auto;
-}
-.plyr--menu-open .center-seek-btn {
-  z-index: 1 !important;
-}
-.plyr__control--overlaid {
-  width: 60px !important;
-  height: 60px !important;
-  border-radius: 50% !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  background: rgba(0,0,0,.55) !important;
-  padding: 0 !important;
-}
+      max-height: 100px !important;
+      overflow-y: auto;
+    }
+    .plyr--menu-open .center-seek-btn {
+      z-index: 1 !important;
+    }
+    .plyr__control--overlaid {
+      width: 60px !important;
+      height: 60px !important;
+      border-radius: 50% !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      background: rgba(0,0,0,.55) !important;
+      padding: 0 !important;
+    }
+    .plyr__control--overlaid i {
+      font-size: 1.6rem;
+      color: #fff;
+      line-height: 1;
+      margin: 0;
+    }
+    .plyr--playing:not(.plyr--hide-controls) .plyr__control--overlaid {
+      opacity: 1 !important;
+      visibility: visible !important;
+      pointer-events: auto !important;
+    }
 
-.plyr__control--overlaid i {
-  font-size: 1.6rem;
-  color: #fff;
-  line-height: 1;
-  margin: 0;
-}
-.plyr--playing:not(.plyr--hide-controls) .plyr__control--overlaid {
-  opacity: 1 !important;
-  visibility: visible !important;
-  pointer-events: auto !important;
-}
-
-.center-seek-btn {
+    .center-seek-btn {
       position: absolute; top: 50%; transform: translateY(-50%);
       width: 46px; height: 46px; border-radius: 50%;
       background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.25);
@@ -128,7 +127,7 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
     .center-seek-left { left: calc(50% - 90px); }
     .center-seek-right { right: calc(50% - 90px); }
     .plyr.controls-locked .center-seek-btn { opacity: 0; visibility: hidden; pointer-events: none; }
- .seek-zone {
+    .seek-zone {
       position: absolute; top: 0; bottom: 56px;
       width: calc(50% - 70px); z-index: 2;
       display: flex; align-items: center; justify-content: center;
@@ -193,7 +192,7 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
     .lang-item:hover { background: var(--ember-dim); }
     .lang-item.active { color: var(--ember); font-weight: 600; }
 
-    .sub-toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 4px; gap: 16px; }
+    .sub-toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 4px; gap: 16px; margin-bottom: 8px; }
     .switch { position: relative; width: 42px; height: 24px; flex-shrink: 0; }
     .switch input { opacity: 0; width: 0; height: 0; }
     .switch-track { position: absolute; inset: 0; background: rgba(255,255,255,.15); border-radius: 99px; transition: .2s; cursor: pointer; }
@@ -315,7 +314,7 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
       <div class="media-buttons">
         <span class="label"><i class="fa-solid fa-sliders"></i> MEDIA</span>
         <button class="chip" id="btnAudio" type="button"><i class="fa-solid fa-music"></i> Audio</button>
-        <button class="chip show" id="btnSubs" type="button"><i class="fa-solid fa-closed-captioning"></i> Subtitles</button>
+        <button class="chip" id="btnSubs" type="button"><i class="fa-solid fa-closed-captioning"></i> Subtitles</button>
       </div>
       <div class="inline-panel" id="audioPanel"></div>
       <div class="inline-panel" id="subsPanel">
@@ -326,6 +325,7 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
             <span class="switch-track"></span>
           </label>
         </div>
+        <div id="subsLangList"></div>
       </div>
     </div>
 
@@ -430,6 +430,9 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
     let audioRequestId = 0;
     let seekDebounceTimer = null;
     let audioMode = 'pending'; // 'pending' | 'none' | 'list'
+    let subMode = 'pending';   // 'pending' | 'none' | 'list'
+    let activeSubIdx = null;
+    let currentTrackEl = null;
 
     function buildAudioUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
@@ -444,12 +447,30 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
       u.pathname = '/api/tracks/' + pathParts.join('/');
       return u.toString();
     }
+    function buildSubtitleTracksUrl() {
+      const u = new URL(STREAM_URL, window.location.origin);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/api/subtitles/' + pathParts.join('/');
+      return u.toString();
+    }
+    function buildSubtitleUrl(streamIndex) {
+      const u = new URL(STREAM_URL, window.location.origin);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/sub/' + streamIndex + '/' + pathParts.join('/');
+      return u.toString();
+    }
 
     const LANG_MAP = {
       eng:'English', en:'English', hin:'Hindi', hi:'Hindi',
       tam:'Tamil', ta:'Tamil', tel:'Telugu', te:'Telugu',
       mal:'Malayalam', ml:'Malayalam', kan:'Kannada', kn:'Kannada',
-      ben:'Bengali', bn:'Bengali', pan:'Punjabi', pa:'Punjabi'
+      ben:'Bengali', bn:'Bengali', pan:'Punjabi', pa:'Punjabi',
+      spa:'Spanish', es:'Spanish', fre:'French', fr:'French',
+      ger:'German', de:'German', ita:'Italian', it:'Italian',
+      por:'Portuguese', pt:'Portuguese', rus:'Russian', ru:'Russian',
+      ara:'Arabic', ar:'Arabic', jpn:'Japanese', ja:'Japanese',
+      kor:'Korean', ko:'Korean', chi:'Chinese', zh:'Chinese',
+      und:'Unknown', '': 'Unknown'
     };
     function trackLabel(track) {
       const meta = track.tags || {};
@@ -622,17 +643,107 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
       });
     }
 
+    /* -------- Subtitles -------- */
+    function clearSubtitleTrack() {
+      const vid = getVideo();
+      if (!vid) return;
+      // Remove previously added track elements
+      Array.from(vid.querySelectorAll('track[data-custom="1"]')).forEach(function (t) {
+        t.remove();
+      });
+      currentTrackEl = null;
+      activeSubIdx = null;
+      if (player && player.captions) {
+        try { player.currentTrack = -1; } catch (e) {}
+      }
+      document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
+        el.classList.remove('active');
+      });
+    }
+
+    function loadSubtitle(streamIndex, label, lang) {
+      const vid = getVideo();
+      if (!vid) return;
+
+      clearSubtitleTrack();
+
+      const track = document.createElement('track');
+      track.kind = 'captions';
+      track.label = label || 'Subtitle';
+      track.srclang = (lang || 'und').slice(0, 2);
+      track.src = buildSubtitleUrl(streamIndex);
+      track.default = true;
+      track.dataset.custom = '1';
+      track.dataset.index = streamIndex;
+
+      track.addEventListener('load', function () {
+        // Enable the track
+        if (track.track) {
+          track.track.mode = 'showing';
+        }
+        if (player) {
+          try {
+            // Plyr: force captions on
+            player.currentTrack = 0;
+          } catch (e) {}
+        }
+      });
+      track.addEventListener('error', function () {
+        alert('Failed to load subtitle track.');
+        clearSubtitleTrack();
+        document.getElementById('subsToggle').checked = false;
+      });
+
+      vid.appendChild(track);
+      currentTrackEl = track;
+      activeSubIdx = streamIndex;
+
+      // Mark active in UI
+      document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
+        el.classList.toggle('active', String(el.dataset.index) === String(streamIndex));
+      });
+
+      // Turn toggle on
+      document.getElementById('subsToggle').checked = true;
+    }
+
+    function renderSubtitleList(tracks) {
+      const btn = document.getElementById('btnSubs');
+      const list = document.getElementById('subsLangList');
+      btn.classList.add('show');
+
+      if (!tracks || tracks.length === 0) {
+        subMode = 'none';
+        list.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:8px 0;">No subtitles found in this file.</div>';
+        return;
+      }
+
+      subMode = 'list';
+      list.innerHTML = '';
+
+      tracks.forEach(function (track) {
+        const item = document.createElement('div');
+        item.className = 'lang-item';
+        item.dataset.index = track.index;
+        item.textContent = trackLabel(track);
+        item.onclick = function () {
+          loadSubtitle(track.index, trackLabel(track), (track.tags && track.tags.language) || '');
+        };
+        list.appendChild(item);
+      });
+    }
+
     function toggleInline(btn, panel, others) {
-  const isOpen = panel.classList.contains('open');
-  others.forEach(function (p) { p.panel.classList.remove('open'); p.btn.classList.remove('open'); });
-  if (!isOpen) {
-    panel.classList.add('open');
-    btn.classList.add('open');
-  } else {
-    panel.classList.remove('open');
-    btn.classList.remove('open');
-  }
-}
+      const isOpen = panel.classList.contains('open');
+      others.forEach(function (p) { p.panel.classList.remove('open'); p.btn.classList.remove('open'); });
+      if (!isOpen) {
+        panel.classList.add('open');
+        btn.classList.add('open');
+      } else {
+        panel.classList.remove('open');
+        btn.classList.remove('open');
+      }
+    }
 
     const audioBtn = document.getElementById('btnAudio');
     const audioPanel = document.getElementById('audioPanel');
@@ -645,10 +756,45 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
       toggleInline(audioBtn, audioPanel, [{ btn: subsBtn, panel: subsPanel }]);
     });
     subsBtn.addEventListener('click', function () {
+      if (subMode === 'pending') return;
       toggleInline(subsBtn, subsPanel, [{ btn: audioBtn, panel: audioPanel }]);
     });
-    // Dummy subtitle toggle — no real subtitle track wired up yet.
-    document.getElementById('subsToggle').addEventListener('change', function () {});
+
+    // Subtitle on/off toggle
+    document.getElementById('subsToggle').addEventListener('change', function () {
+      const checked = this.checked;
+      const vid = getVideo();
+      if (!vid) return;
+
+      if (!checked) {
+        // Hide captions
+        Array.from(vid.textTracks).forEach(function (tt) {
+          tt.mode = 'hidden';
+        });
+        if (player) {
+          try { player.currentTrack = -1; } catch (e) {}
+        }
+        document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
+          el.classList.remove('active');
+        });
+        activeSubIdx = null;
+      } else {
+        // If a track was previously selected, re-show it
+        if (currentTrackEl && currentTrackEl.track) {
+          currentTrackEl.track.mode = 'showing';
+          if (player) {
+            try { player.currentTrack = 0; } catch (e) {}
+          }
+          if (activeSubIdx != null) {
+            document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
+              el.classList.toggle('active', String(el.dataset.index) === String(activeSubIdx));
+            });
+          }
+        } else {
+          // No track loaded yet – just leave toggle on; user must pick a language
+        }
+      }
+    });
 
     /* -------- Like / Dislike -------- */
     (function () {
@@ -785,11 +931,11 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
     })();
 
     function copyLink() {
-  const pageUrl = window.location.href;
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(pageUrl).then(function () { alert('Link copied!'); }).catch(function () { prompt('Copy this link:', pageUrl); });
-  } else prompt('Copy this link:', pageUrl);
-}
+      const pageUrl = window.location.href;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(pageUrl).then(function () { alert('Link copied!'); }).catch(function () { prompt('Copy this link:', pageUrl); });
+      } else prompt('Copy this link:', pageUrl);
+    }
 
     /* -------- Share -------- */
     document.getElementById('btnShare').addEventListener('click', function () {
@@ -812,25 +958,26 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
       showLoadingUI(true, 'Loading…');
 
       player = new Plyr('#player', {
-        controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'settings', 'fullscreen'],
-        settings: ['speed'],
+        controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'captions', 'settings', 'fullscreen'],
+        settings: ['captions', 'speed'],
+        captions: { active: false, language: 'auto', update: true },
         speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
         seekTime: 10
       });
       player.on('ready', function () {
-  var btn = document.querySelector('.plyr__control--overlaid');
-  if (!btn) return;
+        var btn = document.querySelector('.plyr__control--overlaid');
+        if (!btn) return;
 
-  btn.innerHTML = '<i class="fa-solid fa-play"></i>';
+        btn.innerHTML = '<i class="fa-solid fa-play"></i>';
 
-  player.on('play', function () {
-    btn.innerHTML = '<i class="fa-solid fa-pause"></i>';
-  });
+        player.on('play', function () {
+          btn.innerHTML = '<i class="fa-solid fa-pause"></i>';
+        });
 
-  player.on('pause', function () {
-    btn.innerHTML = '<i class="fa-solid fa-play"></i>';
-  });
-});
+        player.on('pause', function () {
+          btn.innerHTML = '<i class="fa-solid fa-play"></i>';
+        });
+      });
 
       player.on('ready', function () {
         const controls = document.querySelector('.plyr__controls');
@@ -844,13 +991,7 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
           dur.parentNode.insertBefore(sep, dur);
         }
 
-        // Plyr wraps the <video> in its own ".plyr" element and that is the
-        // element that actually goes fullscreen — not our outer .player-box.
-        // Anything left outside .plyr (loading spinner, seek zones) is
-        // invisible and untappable once fullscreen starts, and taps then
-        // land on the raw video, which is what was toggling fullscreen off
-        // on a double-tap. Move all overlay UI inside .plyr so it travels
-        // into fullscreen with the video.
+        // Move overlay UI inside .plyr so it travels into fullscreen
         const plyrEl = document.querySelector('.plyr');
         const loadingUI = document.getElementById('mediaLoadingUI');
         const seekLeftEl = document.getElementById('seekLeft');
@@ -878,31 +1019,31 @@ button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: non
         vid.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); });
 
         function setupZone(zoneId, flashId, direction) {
-  const zone = document.getElementById(zoneId);
-  const flash = document.getElementById(flashId);
+          const zone = document.getElementById(zoneId);
+          const flash = document.getElementById(flashId);
 
-  zone.addEventListener('dblclick', function (e) {
-    e.preventDefault();
-    e.stopPropagation();
+          zone.addEventListener('dblclick', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
 
-    const newTime = Math.max(
-      0,
-      Math.min(vid.duration || Infinity, vid.currentTime + direction * 10)
-    );
+            const newTime = Math.max(
+              0,
+              Math.min(vid.duration || Infinity, vid.currentTime + direction * 10)
+            );
 
-    vid.currentTime = newTime;
-    flash.classList.add('show');
+            vid.currentTime = newTime;
+            flash.classList.add('show');
 
-    setTimeout(function () {
-      flash.classList.remove('show');
-    }, 450);
-  });
-}
+            setTimeout(function () {
+              flash.classList.remove('show');
+            }, 450);
+          });
+        }
 
         setupZone('seekLeft', 'seekFlashLeft', -1);
         setupZone('seekRight', 'seekFlashRight', 1);
       })();
-document.getElementById('centerSeekLeft').addEventListener('click', function (e) {
+      document.getElementById('centerSeekLeft').addEventListener('click', function (e) {
         e.stopPropagation();
         const vid = getVideo();
         vid.currentTime = Math.max(0, vid.currentTime - 10);
@@ -918,10 +1059,17 @@ document.getElementById('centerSeekLeft').addEventListener('click', function (e)
         if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') { e.preventDefault(); e.stopPropagation(); }
       }, true);
 
+      // Fetch audio tracks
       fetch(buildTracksUrl())
         .then(function (r) { return r.json(); })
         .then(function (tracks) { renderAudioList(tracks); })
         .catch(function () { renderAudioList([]); });
+
+      // Fetch subtitle tracks
+      fetch(buildSubtitleTracksUrl())
+        .then(function (r) { return r.json(); })
+        .then(function (tracks) { renderSubtitleList(tracks); })
+        .catch(function () { renderSubtitleList([]); });
 
       const vid = getVideo();
       if (!vid) return;
