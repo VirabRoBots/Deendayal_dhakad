@@ -10,6 +10,7 @@ from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 from Deendayal_botz.util.custom_dl import ByteStreamer
 from Deendayal_botz.util.render_template import render_page
 from Deendayal_botz.util.audio_tracks import get_tracks, extract_audio_stream
+from Deendayal_botz.util.subtitle_tracks import get_subtitle_tracks, extract_subtitle
 from info import *
 
 routes = web.RouteTableDef()
@@ -66,6 +67,23 @@ async def tracks_handler(request: web.Request):
         raise web.HTTPInternalServerError(text=str(e))
 
 
+@routes.get(r"/api/subtitles/{path:\S+}", allow_head=True)
+async def subtitles_handler(request: web.Request):
+    """List all subtitle tracks for a file."""
+    try:
+        path = request.match_info["path"]
+        id, secure_hash = parse_id_hash(path, request)
+        tracks = await get_subtitle_tracks(id, secure_hash)
+        return web.json_response(tracks)
+    except InvalidHash as e:
+        raise web.HTTPForbidden(text=e.message)
+    except FIleNotFound as e:
+        raise web.HTTPNotFound(text=e.message)
+    except Exception as e:
+        logging.exception("subtitles_handler error")
+        raise web.HTTPInternalServerError(text=str(e))
+
+
 @routes.get(r"/audio/{stream_index:\d+}/{path:\S+}", allow_head=True)
 async def audio_handler(request: web.Request):
     try:
@@ -73,9 +91,6 @@ async def audio_handler(request: web.Request):
         stream_index = int(request.match_info["stream_index"])
         id, secure_hash = parse_id_hash(path, request)
 
-        # ?t=<seconds> tells us where in the video the player currently is,
-        # so extraction can start there instead of always from 0. Defaults
-        # to 0 (start of track) if not given or invalid.
         start_time = 0.0
         raw_t = request.rel_url.query.get("t")
         if raw_t:
@@ -90,7 +105,6 @@ async def audio_handler(request: web.Request):
             body=body,
             headers={
                 "Content-Type": "audio/aac",
-                # The extractor streams a live window; it cannot serve Range.
                 "Accept-Ranges": "none",
                 "Cache-Control": "no-store",
             },
@@ -103,6 +117,35 @@ async def audio_handler(request: web.Request):
         pass
     except Exception as e:
         logging.exception("audio_handler error")
+        raise web.HTTPInternalServerError(text=str(e))
+
+
+@routes.get(r"/sub/{stream_index:\d+}/{path:\S+}", allow_head=True)
+async def subtitle_handler(request: web.Request):
+    """Stream a single subtitle track as WebVTT."""
+    try:
+        path = request.match_info["path"]
+        stream_index = int(request.match_info["stream_index"])
+        id, secure_hash = parse_id_hash(path, request)
+
+        body = await extract_subtitle(id, secure_hash, stream_index)
+        return web.Response(
+            status=200,
+            body=body,
+            headers={
+                "Content-Type": "text/vtt; charset=utf-8",
+                "Cache-Control": "public, max-age=3600",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+    except InvalidHash as e:
+        raise web.HTTPForbidden(text=e.message)
+    except FIleNotFound as e:
+        raise web.HTTPNotFound(text=e.message)
+    except (AttributeError, BadStatusLine, ConnectionResetError):
+        pass
+    except Exception as e:
+        logging.exception("subtitle_handler error")
         raise web.HTTPInternalServerError(text=str(e))
 
 
