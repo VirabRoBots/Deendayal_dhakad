@@ -22,6 +22,7 @@ from Deendayal_botz.Bot import DeendayalBot
 from Deendayal_botz.util.keepalive import ping_server
 from Deendayal_botz.Bot.clients import initialize_clients
 from Deendayal_botz.util.audio_tracks import start_cache_cleanup_loop
+from Deendayal_botz.util.subtitle_tracks import start_subtitle_cleanup_loop
 
 logging.config.fileConfig('logging.conf')
 logging.getLogger().setLevel(logging.INFO)
@@ -46,6 +47,7 @@ async def Deendayal_start():
     DeendayalBot.username = bot_info.username
     await initialize_clients()
     asyncio.create_task(start_cache_cleanup_loop())
+    asyncio.create_task(start_subtitle_cleanup_loop())   # <-- NEW: subtitle cache cleanup
     for name in files:
         with open(name) as a:
             patt = Path(a.name)
