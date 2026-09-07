@@ -10,7 +10,7 @@ from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 from Deendayal_botz.util.custom_dl import ByteStreamer
 from Deendayal_botz.util.render_template import render_page
 from Deendayal_botz.util.audio_tracks import get_tracks, extract_audio_stream
-from Deendayal_botz.util.subtitle_tracks import get_subtitle_tracks, extract_subtitle
+from Deendayal_botz.util.subtitle_tracks import get_subtitle_tracks, extract_subtitle, extract_full_subtitle
 from info import *
 
 routes = web.RouteTableDef()
@@ -122,7 +122,7 @@ async def audio_handler(request: web.Request):
 
 @routes.get(r"/sub/{stream_index:\d+}/{path:\S+}", allow_head=True)
 async def subtitle_handler(request: web.Request):
-    """Stream a single subtitle track as WebVTT."""
+    """Stream a single subtitle track as WebVTT (legacy windowed path)."""
     try:
         path = request.match_info["path"]
         stream_index = int(request.match_info["stream_index"])
@@ -146,6 +146,44 @@ async def subtitle_handler(request: web.Request):
         pass
     except Exception as e:
         logging.exception("subtitle_handler error")
+        raise web.HTTPInternalServerError(text=str(e))
+
+
+@routes.get(r"/subs/{stream_index:\d+}/{path:\S+}", allow_head=True)
+async def full_subtitle_handler(request: web.Request):
+    """
+    Stream an ENTIRE subtitle track (no windowing) as WebVTT.
+
+    This is the new, simpler path: one ffmpeg extraction per (file, stream)
+    pair, cached on disk, no timestamp-shift math needed client-side since
+    the whole file carries real absolute timestamps from movie-start.
+    """
+    try:
+        path = request.match_info["path"]
+        stream_index = int(request.match_info["stream_index"])
+        id, secure_hash = parse_id_hash(path, request)
+
+        out_path = await extract_full_subtitle(id, secure_hash, stream_index)
+        with open(out_path, "rb") as f:
+            body = f.read()
+
+        return web.Response(
+            status=200,
+            body=body,
+            headers={
+                "Content-Type": "text/vtt; charset=utf-8",
+                "Cache-Control": "public, max-age=3600",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
+    except InvalidHash as e:
+        raise web.HTTPForbidden(text=e.message)
+    except FIleNotFound as e:
+        raise web.HTTPNotFound(text=e.message)
+    except (AttributeError, BadStatusLine, ConnectionResetError):
+        pass
+    except Exception as e:
+        logging.exception("full_subtitle_handler error")
         raise web.HTTPInternalServerError(text=str(e))
 
 
