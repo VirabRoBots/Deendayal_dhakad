@@ -10,9 +10,8 @@ from Deendayal_botz.server.exceptions import FIleNotFound, InvalidHash
 from Deendayal_botz.util.custom_dl import ByteStreamer
 from Deendayal_botz.util.render_template import render_page
 from Deendayal_botz.util.audio_tracks import get_tracks, extract_audio_stream
-from Deendayal_botz.util.subtitle_tracks import get_subtitle_tracks, extract_full_subtitle
+from Deendayal_botz.util.subtitle_tracks import get_subtitle_tracks, extract_subtitle
 from info import *
-from Deendayal_botz.util.subtitle_tracks import get_subtitle_tracks, extract_subtitle_window
 
 routes = web.RouteTableDef()
 
@@ -70,7 +69,6 @@ async def tracks_handler(request: web.Request):
 
 @routes.get(r"/api/subtitles/{path:\S+}", allow_head=True)
 async def subtitles_handler(request: web.Request):
-    """List all subtitle tracks for a file."""
     try:
         path = request.match_info["path"]
         id, secure_hash = parse_id_hash(path, request)
@@ -120,9 +118,10 @@ async def audio_handler(request: web.Request):
         logging.exception("audio_handler error")
         raise web.HTTPInternalServerError(text=str(e))
 
-@routes.get(r"/subs/{stream_index:\d+}/{path:\S+}", allow_head=True)
-async def subtitle_window_handler(request: web.Request):
-    """Stream a WINDOW (e.g. 10 min) of subtitles starting at ?t=<seconds>."""
+
+@routes.get(r"/sub/{stream_index:\d+}/{path:\S+}", allow_head=True)
+async def subtitle_handler(request: web.Request):
+    """Fast windowed subtitle extraction."""
     try:
         path = request.match_info["path"]
         stream_index = int(request.match_info["stream_index"])
@@ -136,7 +135,7 @@ async def subtitle_window_handler(request: web.Request):
             except ValueError:
                 start_time = 0.0
 
-        body = await extract_subtitle_window(id, secure_hash, stream_index, start_time)
+        body = await extract_subtitle(id, secure_hash, stream_index, start_time)
         return web.Response(
             status=200,
             body=body,
@@ -153,8 +152,9 @@ async def subtitle_window_handler(request: web.Request):
     except (AttributeError, BadStatusLine, ConnectionResetError):
         pass
     except Exception as e:
-        logging.exception("subtitle_window_handler error")
+        logging.exception("subtitle_handler error")
         raise web.HTTPInternalServerError(text=str(e))
+
 
 @routes.get(r"/{path:\S+}", allow_head=True)
 async def stream_handler(request: web.Request):
@@ -253,4 +253,4 @@ async def media_streamer(request: web.Request, id: int, secure_hash: str):
             "Content-Disposition": f'{disposition}; filename="{file_name}"',
             "Accept-Ranges": "bytes",
         },
-    )
+        )
