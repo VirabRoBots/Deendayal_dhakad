@@ -443,162 +443,160 @@
     let audioMode = 'pending';
     let subMode = 'pending';
 
-    // ---- NEW subtitle state (custom overlay, client-side parsed cues) ----
-    let subCues = [];          // [{start, end, text}, ...] sorted by start
-    let subCuePointer = 0;     // moving index for fast lookup as time advances
-    let activeSubIndex = null; // stream index currently loaded
-    let subsEnabled = false;   // toggle state
-    let subLoadToken = 0;      // guards against stale fetches on rapid switching
+    const SUB_WINDOW_SECONDS = 600;
+const SUB_ROLLOVER_LEAD = 45; // start fetching next window this many sec before edge
 
-    function buildAudioUrl(streamIndex, atTime) {
-      const u = new URL(STREAM_URL, window.location.origin);
-      const pathParts = u.pathname.split('/').filter(Boolean);
-      u.pathname = '/audio/' + streamIndex + '/' + pathParts.join('/');
-      u.searchParams.set('t', Math.max(0, atTime || 0).toFixed(3));
-      return u.toString();
-    }
-    function buildTracksUrl() {
-      const u = new URL(STREAM_URL, window.location.origin);
-      const pathParts = u.pathname.split('/').filter(Boolean);
-      u.pathname = '/api/tracks/' + pathParts.join('/');
-      return u.toString();
-    }
-    function buildSubtitleTracksUrl() {
-      const u = new URL(STREAM_URL, window.location.origin);
-      const pathParts = u.pathname.split('/').filter(Boolean);
-      u.pathname = '/api/subtitles/' + pathParts.join('/');
-      return u.toString();
-    }
-    // NEW: points at the whole-file, non-windowed subtitle endpoint.
-    // No ?t= parameter at all — the backend returns the entire track once.
-    function buildFullSubtitleUrl(streamIndex) {
-      const u = new URL(STREAM_URL, window.location.origin);
-      const pathParts = u.pathname.split('/').filter(Boolean);
-      u.pathname = '/subs/' + streamIndex + '/' + pathParts.join('/');
-      return u.toString();
-    }
+let subCues = [];
+let subCuePointer = 0;
+let activeSubIndex = null;
+let subsEnabled = false;
+let subLoadToken = 0;
+let subWindowStart = 0;       // real video-time the current window begins at
+let subWindowEnd = 0;
+let subPreparing = false;     // NEW: drives shared pause/loading state
+let subPrefetchInFlight = false;
 
-    // ---- NEW: client-side subtitle cue parser ----
-    // Handles VTT (MM:SS.mmm or HH:MM:SS.mmm) and SRT (HH:MM:SS,mmm) alike,
-    // skips WEBVTT headers and SRT numeric cue-index lines automatically.
-    function parseSubtitleCues(text) {
-      const cues = [];
-      text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      const blocks = text.split(/\n\s*\n/);
-      const timeRe = /(?:(\d{2}):)?(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(?:(\d{2}):)?(\d{2}):(\d{2})[.,](\d{3})/;
+function buildSubtitleWindowUrl(streamIndex, atTime) {
+  const u = new URL(STREAM_URL, window.location.origin);
+  const pathParts = u.pathname.split('/').filter(Boolean);
+  u.pathname = '/subs/' + streamIndex + '/' + pathParts.join('/');
+  u.searchParams.set('t', Math.max(0, atTime || 0).toFixed(3));
+  return u.toString();
+}
 
-      function toSec(h, m, s, ms) {
-        return (+(h || 0)) * 3600 + (+m) * 60 + (+s) + (+ms) / 1000;
-      }
+function parseSubtitleCues(text) {
+  const cues = [];
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const blocks = text.split(/\n\s*\n/);
+  const timeRe = /(?:(\d{2}):)?(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(?:(\d{2}):)?(\d{2}):(\d{2})[.,](\d{3})/;
+  function toSec(h, m, s, ms) { return (+(h||0))*3600 + (+m)*60 + (+s) + (+ms)/1000; }
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) continue;
+    let idx = -1;
+    for (let i = 0; i < lines.length; i++) { if (timeRe.test(lines[i])) { idx = i; break; } }
+    if (idx === -1) continue;
+    const m = lines[idx].match(timeRe);
+    const start = toSec(m[1], m[2], m[3], m[4]);
+    const end = toSec(m[5], m[6], m[7], m[8]);
+    const textLines = lines.slice(idx + 1);
+    if (textLines.length === 0) continue;
+    cues.push({ start, end, text: textLines.join('\n') });
+  }
+  cues.sort((a, b) => a.start - b.start);
+  return cues;
+}
 
-      for (const block of blocks) {
-        const lines = block.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
-        if (lines.length === 0) continue;
+// Combines with your EXISTING setPreparing()/updateLoadingUI() so subtitle
+// loading pauses video+audio the same way audio-track switching does.
+function setSubPreparing(on) {
+  subPreparing = on;
+  updateLoadingUI();
+}
 
-        let timeLineIdx = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (timeRe.test(lines[i])) { timeLineIdx = i; break; }
-        }
-        if (timeLineIdx === -1) continue;
+// Patch updateLoadingUI to also respect subPreparing (edit your existing fn):
+function updateLoadingUI() {
+  if (isPreparingAudio || subPreparing) { showLoadingUI(true, subPreparing ? 'Loading subtitles…' : 'Preparing audio…'); pauseForPrep(); return; }
+  if (buffering) { showLoadingUI(true, 'Loading…'); return; }
+  showLoadingUI(false);
+}
+function pauseForPrep() {
+  const vid = getVideo();
+  if (vid && !vid.paused) vid.pause();
+  if (activeAudio && !activeAudio.paused) activeAudio.pause();
+}
 
-        const m = lines[timeLineIdx].match(timeRe);
-        const start = toSec(m[1], m[2], m[3], m[4]);
-        const end = toSec(m[5], m[6], m[7], m[8]);
-        const textLines = lines.slice(timeLineIdx + 1);
-        if (textLines.length === 0) continue;
+function loadSubtitleWindow(streamIndex, atTime, isInitial) {
+  const myToken = ++subLoadToken;
+  if (isInitial) setSubPreparing(true);
 
-        cues.push({ start: start, end: end, text: textLines.join('\n') });
-      }
+  return fetch(buildSubtitleWindowUrl(streamIndex, atTime))
+    .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text(); })
+    .then(text => {
+      if (myToken !== subLoadToken) return;
+      const cues = parseSubtitleCues(text);
+      // Offset cues by window start — server resets timestamps to 0 per window
+      for (const c of cues) { c.start += atTime; c.end += atTime; }
 
-      cues.sort(function (a, b) { return a.start - b.start; });
-      return cues;
-    }
-
-    // ---- NEW: load + parse the whole subtitle track once ----
-    function loadSubtitleFull(streamIndex, label) {
-      const myToken = ++subLoadToken;
-      activeSubIndex = streamIndex;
-      subCues = [];
-      subCuePointer = 0;
-      hideSubtitleOverlay();
-
-      const listBtn = document.getElementById('btnSubs');
-      const loadingList = document.getElementById('subsLangList');
-
-      fetch(buildFullSubtitleUrl(streamIndex))
-        .then(function (res) {
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          return res.text();
-        })
-        .then(function (text) {
-          if (myToken !== subLoadToken) return; // a newer request superseded this one
-          const cues = parseSubtitleCues(text);
-          if (cues.length === 0) throw new Error('No cues found in subtitle file');
-          subCues = cues;
-          subCuePointer = 0;
-          subsEnabled = true;
-          document.getElementById('subsToggle').checked = true;
-          document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
-            el.classList.toggle('active', String(el.dataset.index) === String(streamIndex));
-          });
-        })
-        .catch(function (err) {
-          if (myToken !== subLoadToken) return;
-          console.error('Subtitle load error:', err);
-          alert('Failed to load subtitle: ' + (err.message || 'unknown error'));
-          subsEnabled = false;
-          activeSubIndex = null;
-          document.getElementById('subsToggle').checked = false;
-        });
-    }
-
-    function hideSubtitleOverlay() {
-      const overlay = document.getElementById('customSubsOverlay');
-      const textEl = document.getElementById('customSubsText');
-      overlay.classList.remove('active');
-      textEl.textContent = '';
-    }
-
-    // ---- NEW: paint the correct cue every animation frame, using a moving
-    // pointer so we don't rescan the whole array on every tick. Handles
-    // both forward playback and seeks (jumps) correctly. ----
-    function paintCue() {
-      const vid = getVideo();
-      if (!subsEnabled || !vid || subCues.length === 0) {
-        requestAnimationFrame(paintCue);
-        return;
-      }
-      const t = vid.currentTime;
-
-      // If a seek jumped us outside a small window around the pointer,
-      // re-sync the pointer with a binary search instead of a linear scan.
-      if (subCuePointer >= subCues.length || t < subCues[Math.max(0, subCuePointer - 1)].start - 2 ||
-          (subCuePointer < subCues.length && t > subCues[subCuePointer].end + 30)) {
-        let lo = 0, hi = subCues.length - 1, ans = 0;
-        while (lo <= hi) {
-          const mid = (lo + hi) >> 1;
-          if (subCues[mid].start <= t) { ans = mid; lo = mid + 1; } else { hi = mid - 1; }
-        }
-        subCuePointer = ans;
-      }
-
-      // Walk forward from the pointer while cues have already ended
-      while (subCuePointer < subCues.length - 1 && subCues[subCuePointer].end < t) {
-        subCuePointer++;
-      }
-
-      const cue = subCues[subCuePointer];
-      const overlay = document.getElementById('customSubsOverlay');
-      const textEl = document.getElementById('customSubsText');
-      if (cue && t >= cue.start && t <= cue.end) {
-        if (textEl.textContent !== cue.text) textEl.textContent = cue.text;
-        overlay.classList.add('active');
+      if (isInitial) {
+        subCues = cues;
       } else {
-        overlay.classList.remove('active');
+        // append next window, drop anything overlapping/older to avoid dupes
+        subCues = subCues.filter(c => c.start < atTime).concat(cues);
       }
+      subWindowStart = atTime;
+      subWindowEnd = atTime + SUB_WINDOW_SECONDS;
+      subCuePointer = 0;
 
-      requestAnimationFrame(paintCue);
-    }
+      if (isInitial) {
+        activeSubIndex = streamIndex;
+        subsEnabled = true;
+        document.getElementById('subsToggle').checked = true;
+        document.querySelectorAll('#subsLangList .lang-item').forEach(el => {
+          el.classList.toggle('active', String(el.dataset.index) === String(streamIndex));
+        });
+        setSubPreparing(false);
+      }
+      subPrefetchInFlight = false;
+    })
+    .catch(err => {
+      if (myToken !== subLoadToken) return;
+      console.error('Subtitle window load error:', err);
+      subPrefetchInFlight = false;
+      if (isInitial) {
+        alert('Failed to load subtitle: ' + (err.message || 'unknown error'));
+        subsEnabled = false;
+        activeSubIndex = null;
+        document.getElementById('subsToggle').checked = false;
+        setSubPreparing(false);
+      }
+    });
+}
+
+function hideSubtitleOverlay() {
+  const overlay = document.getElementById('customSubsOverlay');
+  const textEl = document.getElementById('customSubsText');
+  overlay.classList.remove('active');
+  textEl.textContent = '';
+}
+
+function paintCue() {
+  const vid = getVideo();
+  if (!subsEnabled || !vid || subCues.length === 0) { requestAnimationFrame(paintCue); return; }
+  const t = vid.currentTime;
+
+  // Prefetch next window as we approach the edge (mirrors audio rollover)
+  if (activeSubIndex !== null && !subPrefetchInFlight && t > subWindowEnd - SUB_ROLLOVER_LEAD) {
+    subPrefetchInFlight = true;
+    loadSubtitleWindow(activeSubIndex, subWindowEnd, false);
+  }
+
+  // If we seeked outside the loaded range entirely, reload fresh (with loading state)
+  if (activeSubIndex !== null && (t < subWindowStart - 2 || t > subWindowEnd + 2) && !subPreparing) {
+    loadSubtitleWindow(activeSubIndex, t, true);
+    requestAnimationFrame(paintCue);
+    return;
+  }
+
+  if (subCuePointer >= subCues.length || t < subCues[Math.max(0, subCuePointer - 1)].start - 2 ||
+      (subCuePointer < subCues.length && t > subCues[subCuePointer].end + 30)) {
+    let lo = 0, hi = subCues.length - 1, ans = 0;
+    while (lo <= hi) { const mid = (lo+hi)>>1; if (subCues[mid].start <= t) { ans = mid; lo = mid+1; } else hi = mid-1; }
+    subCuePointer = ans;
+  }
+  while (subCuePointer < subCues.length - 1 && subCues[subCuePointer].end < t) subCuePointer++;
+
+  const cue = subCues[subCuePointer];
+  const overlay = document.getElementById('customSubsOverlay');
+  const textEl = document.getElementById('customSubsText');
+  if (cue && t >= cue.start && t <= cue.end) {
+    if (textEl.textContent !== cue.text) textEl.textContent = cue.text;
+    overlay.classList.add('active');
+  } else {
+    overlay.classList.remove('active');
+  }
+  requestAnimationFrame(paintCue);
+}
 
     const LANG_MAP = {
       eng:'English', en:'English', hin:'Hindi', hi:'Hindi',
@@ -802,8 +800,8 @@
         item.dataset.index = track.index;
         item.textContent = trackLabel(track);
         item.onclick = function () {
-          loadSubtitleFull(track.index, trackLabel(track));
-        };
+  loadSubtitleWindow(track.index, getVideo().currentTime, true); // isInitial=true → shows loading, pauses vid+audio
+};
         list.appendChild(item);
       });
     }
