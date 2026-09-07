@@ -106,8 +106,6 @@
       line-height: 1;
       margin: 0;
     }
-    /* FIX: :not(.controls-locked) added so this center button correctly
-       hides during loading even while .plyr--playing is set */
     .plyr--playing:not(.plyr--hide-controls):not(.controls-locked) .plyr__control--overlaid {
       opacity: 1 !important; visibility: visible !important; pointer-events: auto !important;
     }
@@ -142,8 +140,6 @@
     .seek-flash span { font-size: .78rem; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,.8); }
     .seek-flash.show { opacity: 1; transform: scale(1); }
 
-    /* NEW: custom subtitle overlay — replaces native <track> rendering.
-       Sits above the video, below the loading overlay, ignores clicks. */
     .custom-subs-overlay {
       position: absolute;
       left: 0; right: 0;
@@ -296,7 +292,6 @@
       <div class="seek-zone seek-zone-right" id="seekRight">
         <div class="seek-flash" id="seekFlashRight"><i class="fa-solid fa-forward"></i><span>10</span></div>
       </div>
-      <!-- NEW: custom subtitle overlay, replaces native <track> rendering -->
       <div class="custom-subs-overlay" id="customSubsOverlay"><span id="customSubsText"></span></div>
       <div id="mediaLoadingUI">
         <div class="load-ring"></div>
@@ -421,6 +416,7 @@
   <script>
     const STREAM_URL = "{{file_url}}";
     const AUDIO_WINDOW_SECONDS = 600;
+    const SUBTITLE_WINDOW_SECONDS = 600;
     const ROLLOVER_LEAD = 45;
     const REFETCH_DRIFT = 1.5;
     const SEAM_LEAD = 0.25;
@@ -443,12 +439,14 @@
     let audioMode = 'pending';
     let subMode = 'pending';
 
-    // ---- NEW subtitle state (custom overlay, client-side parsed cues) ----
-    let subCues = [];          // [{start, end, text}, ...] sorted by start
-    let subCuePointer = 0;     // moving index for fast lookup as time advances
-    let activeSubIndex = null; // stream index currently loaded
-    let subsEnabled = false;   // toggle state
-    let subLoadToken = 0;      // guards against stale fetches on rapid switching
+    // Subtitle state
+    let subCues = [];
+    let subCuePointer = 0;
+    let activeSubIndex = null;
+    let subsEnabled = false;
+    let subLoadToken = 0;
+    let isPreparingSubtitle = false;
+    let playAfterSubPrepare = false;
 
     function buildAudioUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
@@ -469,18 +467,14 @@
       u.pathname = '/api/subtitles/' + pathParts.join('/');
       return u.toString();
     }
-    // NEW: points at the whole-file, non-windowed subtitle endpoint.
-    // No ?t= parameter at all — the backend returns the entire track once.
-    function buildFullSubtitleUrl(streamIndex) {
+    function buildSubtitleUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
       const pathParts = u.pathname.split('/').filter(Boolean);
-      u.pathname = '/subs/' + streamIndex + '/' + pathParts.join('/');
+      u.pathname = '/sub/' + streamIndex + '/' + pathParts.join('/');
+      u.searchParams.set('t', Math.max(0, atTime || 0).toFixed(3));
       return u.toString();
     }
 
-    // ---- NEW: client-side subtitle cue parser ----
-    // Handles VTT (MM:SS.mmm or HH:MM:SS.mmm) and SRT (HH:MM:SS,mmm) alike,
-    // skips WEBVTT headers and SRT numeric cue-index lines automatically.
     function parseSubtitleCues(text) {
       const cues = [];
       text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -514,41 +508,62 @@
       return cues;
     }
 
-    // ---- NEW: load + parse the whole subtitle track once ----
-    function loadSubtitleFull(streamIndex, label) {
+    function loadSubtitleWindow(streamIndex, atTime) {
       const myToken = ++subLoadToken;
       activeSubIndex = streamIndex;
       subCues = [];
       subCuePointer = 0;
       hideSubtitleOverlay();
 
-      const listBtn = document.getElementById('btnSubs');
-      const loadingList = document.getElementById('subsLangList');
+      const vid = getVideo();
+      const wasPlaying = vid && !vid.paused;
 
-      fetch(buildFullSubtitleUrl(streamIndex))
+      if (vid && wasPlaying) {
+        playAfterSubPrepare = true;
+        vid.pause();
+      }
+      if (activeAudio && !activeAudio.paused) {
+        activeAudio.pause();
+      }
+
+      setPreparingSubtitle(true);
+
+      const url = buildSubtitleUrl(streamIndex, atTime || (vid ? vid.currentTime : 0));
+
+      fetch(url)
         .then(function (res) {
           if (!res.ok) throw new Error('HTTP ' + res.status);
           return res.text();
         })
         .then(function (text) {
-          if (myToken !== subLoadToken) return; // a newer request superseded this one
+          if (myToken !== subLoadToken) return;
+
           const cues = parseSubtitleCues(text);
-          if (cues.length === 0) throw new Error('No cues found in subtitle file');
           subCues = cues;
           subCuePointer = 0;
           subsEnabled = true;
           document.getElementById('subsToggle').checked = true;
+
           document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
             el.classList.toggle('active', String(el.dataset.index) === String(streamIndex));
           });
+
+          setPreparingSubtitle(false);
+
+          if (playAfterSubPrepare) {
+            playAfterSubPrepare = false;
+            if (vid) vid.play().catch(function () {});
+            if (activeAudio) activeAudio.play().catch(function () {});
+          }
         })
         .catch(function (err) {
           if (myToken !== subLoadToken) return;
           console.error('Subtitle load error:', err);
-          alert('Failed to load subtitle: ' + (err.message || 'unknown error'));
+          setPreparingSubtitle(false);
           subsEnabled = false;
           activeSubIndex = null;
           document.getElementById('subsToggle').checked = false;
+          alert('Failed to load subtitle: ' + (err.message || 'unknown error'));
         });
     }
 
@@ -559,9 +574,6 @@
       textEl.textContent = '';
     }
 
-    // ---- NEW: paint the correct cue every animation frame, using a moving
-    // pointer so we don't rescan the whole array on every tick. Handles
-    // both forward playback and seeks (jumps) correctly. ----
     function paintCue() {
       const vid = getVideo();
       if (!subsEnabled || !vid || subCues.length === 0) {
@@ -570,8 +582,6 @@
       }
       const t = vid.currentTime;
 
-      // If a seek jumped us outside a small window around the pointer,
-      // re-sync the pointer with a binary search instead of a linear scan.
       if (subCuePointer >= subCues.length || t < subCues[Math.max(0, subCuePointer - 1)].start - 2 ||
           (subCuePointer < subCues.length && t > subCues[subCuePointer].end + 30)) {
         let lo = 0, hi = subCues.length - 1, ans = 0;
@@ -582,7 +592,6 @@
         subCuePointer = ans;
       }
 
-      // Walk forward from the pointer while cues have already ended
       while (subCuePointer < subCues.length - 1 && subCues[subCuePointer].end < t) {
         subCuePointer++;
       }
@@ -628,14 +637,26 @@
       else { if (el) el.classList.remove('show'); if (plyrEl) plyrEl.classList.remove('controls-locked'); }
     }
     function updateLoadingUI() {
-      if (isPreparingAudio) { showLoadingUI(true, 'Preparing audio…'); return; }
-      if (buffering) { showLoadingUI(true, 'Loading…'); return; }
+      if (isPreparingAudio || isPreparingSubtitle) {
+        showLoadingUI(true, isPreparingSubtitle ? 'Preparing subtitles…' : 'Preparing audio…');
+        return;
+      }
+      if (buffering) {
+        showLoadingUI(true, 'Loading…');
+        return;
+      }
       showLoadingUI(false);
     }
     function setPreparing(on) {
       isPreparingAudio = on;
       const plyrEl = document.querySelector('.plyr');
-      if (plyrEl) plyrEl.classList.toggle('seek-blocked', on);
+      if (plyrEl) plyrEl.classList.toggle('seek-blocked', on || isPreparingSubtitle);
+      updateLoadingUI();
+    }
+    function setPreparingSubtitle(on) {
+      isPreparingSubtitle = on;
+      const plyrEl = document.querySelector('.plyr');
+      if (plyrEl) plyrEl.classList.toggle('seek-blocked', on || isPreparingAudio);
       updateLoadingUI();
     }
 
@@ -802,7 +823,7 @@
         item.dataset.index = track.index;
         item.textContent = trackLabel(track);
         item.onclick = function () {
-          loadSubtitleFull(track.index, trackLabel(track));
+          loadSubtitleWindow(track.index, getVideo() ? getVideo().currentTime : 0);
         };
         list.appendChild(item);
       });
@@ -835,8 +856,6 @@
       toggleInline(subsBtn, subsPanel, [{ btn: audioBtn, panel: audioPanel }]);
     });
 
-    // NEW: toggle just flips subsEnabled — no track/blob work needed since
-    // the cues are already parsed and sitting in memory.
     document.getElementById('subsToggle').addEventListener('change', function () {
       subsEnabled = this.checked && activeSubIndex !== null;
       if (!subsEnabled) hideSubtitleOverlay();
@@ -1037,7 +1056,6 @@
       player.on('exitfullscreen', unlockOrientation);
       player.on('volumechange', syncVolume);
 
-      // Start the subtitle paint loop once, runs for the page's lifetime
       requestAnimationFrame(paintCue);
 
       (function () {
@@ -1069,7 +1087,7 @@
         vid.currentTime = Math.min(vid.duration || Infinity, vid.currentTime + 10);
       });
       document.addEventListener('keydown', function (e) {
-        if (!isPreparingAudio) return;
+        if (!isPreparingAudio && !isPreparingSubtitle) return;
         const key = e.key.toLowerCase();
         if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') { e.preventDefault(); e.stopPropagation(); }
       }, true);
@@ -1092,7 +1110,7 @@
       buffering = vid.readyState < 3;
       updateLoadingUI();
 
-      vid.addEventListener('play', function () { if (isPreparingAudio) { playAfterPrepare = true; vid.pause(); updateLoadingUI(); } });
+      vid.addEventListener('play', function () { if (isPreparingAudio || isPreparingSubtitle) { playAfterPrepare = true; vid.pause(); updateLoadingUI(); } });
       vid.addEventListener('pause', function () { if (activeAudio && !isPreparingAudio) activeAudio.pause(); });
       vid.addEventListener('ratechange', function () { if (activeAudio) activeAudio.playbackRate = vid.playbackRate; });
       vid.addEventListener('seeking', function () { if (activeAudio && !activeAudio.paused) activeAudio.pause(); });
@@ -1101,10 +1119,12 @@
         dropNext();
         if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
         seekDebounceTimer = setTimeout(function () { if (activeTrackIdx === null) return; requestAudio(activeTrackIdx, getVideo().currentTime); }, 400);
+
+        // also refresh subtitle window on seek
+        if (activeSubIndex !== null && !isPreparingSubtitle) {
+          loadSubtitleWindow(activeSubIndex, vid.currentTime);
+        }
       });
-      // NOTE: no subtitle-specific seek handling needed anymore — paintCue()
-      // re-syncs its pointer automatically via binary search whenever the
-      // playhead jumps outside its expected range. Subtitles just work.
 
       setInterval(function () {
         if (!activeAudio || isPreparingAudio) return;
@@ -1129,4 +1149,4 @@
     });
   </script>
 </body>
-</html>
+  </html>
