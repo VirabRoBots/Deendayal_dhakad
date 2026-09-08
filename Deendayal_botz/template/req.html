@@ -646,19 +646,28 @@
       kor:'Korean', ko:'Korean', chi:'Chinese', zh:'Chinese',
       und:'Unknown', '': 'Unknown'
     };
-    function trackLabel(track) {
+function trackLabel(track) {
   const meta = track.tags || {};
   const lang = (meta.language || '').toLowerCase();
-  
-  // Prefer clean language name
-  if (LANG_MAP[lang]) {
-    return LANG_MAP[lang];
-  }
-  
-  // Fallback to original title if language is unknown
+  const langName = LANG_MAP[lang] || '';
   const title = (meta.title || '').trim();
-  if (title) return title;
-  
+
+  // Both language + original title available
+  if (langName && title) {
+    return `${langName} - ${title}`;
+  }
+
+  // Only language name
+  if (langName) {
+    return langName;
+  }
+
+  // Only original title
+  if (title) {
+    return title;
+  }
+
+  // Fallback
   return lang || 'Unknown';
 }
     function getVideo() { return document.querySelector('#player'); }
