@@ -647,10 +647,16 @@
       und:'Unknown', '': 'Unknown'
     };
     function trackLabel(track) {
-      const meta = track.tags || {};
-      const lang = (meta.language || '').toLowerCase();
-      return LANG_MAP[lang] || (meta.title || lang || 'Unknown');
-    }
+  const meta = track.tags || {};
+  const title = (meta.title || '').trim();
+  
+  // Prefer original title if it exists
+  if (title) return title;
+
+  // Fallback only when title is missing
+  const lang = (meta.language || '').toLowerCase();
+  return LANG_MAP[lang] || lang || 'Unknown';
+      }
     function getVideo() { return document.querySelector('#player'); }
 
     function showLoadingUI(show, text) {
