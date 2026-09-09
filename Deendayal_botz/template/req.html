@@ -447,8 +447,8 @@
     let subLoadToken = 0;
     let isPreparingSubtitle = false;
     let playAfterSubPrepare = false;
-    let subWindowStart = 0;          // absolute start of current window
-    let subWindowEnd = 0;            // absolute end of current window
+    let subWindowStart = 0;
+    let subWindowEnd = 0;
 
     function buildAudioUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
@@ -510,7 +510,6 @@
       return cues;
     }
 
-    // ========== FIXED: Windowed subtitle loader with timestamp shift ==========
     function loadSubtitleWindow(streamIndex, atTime) {
       const myToken = ++subLoadToken;
       activeSubIndex = streamIndex;
@@ -547,9 +546,6 @@
 
           const rawCues = parseSubtitleCues(text);
 
-          // ★★★ CRITICAL FIX ★★★
-          // ffmpeg windowed VTT has relative timestamps (starts from 0).
-          // We must shift every cue by the requested start time.
           subCues = rawCues.map(function (c) {
             return {
               start: c.start + requestedStart,
@@ -600,7 +596,6 @@
       }
       const t = vid.currentTime;
 
-      // Auto-reload next window when approaching the end
       if (t > subWindowEnd - 30 && activeSubIndex !== null && !isPreparingSubtitle) {
         loadSubtitleWindow(activeSubIndex, Math.max(0, t - 5));
         requestAnimationFrame(paintCue);
@@ -646,30 +641,23 @@
       kor:'Korean', ko:'Korean', chi:'Chinese', zh:'Chinese',
       und:'Unknown', '': 'Unknown'
     };
-function trackLabel(track) {
-  const meta = track.tags || {};
-  const lang = (meta.language || '').toLowerCase();
-  const langName = LANG_MAP[lang] || '';
-  const title = (meta.title || '').trim();
+    function trackLabel(track) {
+      const meta = track.tags || {};
+      const lang = (meta.language || '').toLowerCase();
+      const langName = LANG_MAP[lang] || '';
+      const title = (meta.title || '').trim();
 
-  // Both language + original title available
-  if (langName && title) {
-    return `${langName} - ${title}`;
-  }
-
-  // Only language name
-  if (langName) {
-    return langName;
-  }
-
-  // Only original title
-  if (title) {
-    return title;
-  }
-
-  // Fallback
-  return lang || 'Unknown';
-}
+      if (langName && title) {
+        return `${langName} - ${title}`;
+      }
+      if (langName) {
+        return langName;
+      }
+      if (title) {
+        return title;
+      }
+      return lang || 'Unknown';
+    }
     function getVideo() { return document.querySelector('#player'); }
 
     function showLoadingUI(show, text) {
@@ -1094,6 +1082,31 @@ function trackLabel(track) {
           if (centerRight) plyrEl.appendChild(centerRight);
           if (subsOverlayEl) plyrEl.appendChild(subsOverlayEl);
         }
+
+        // ========== NEW: Toggle controls on click (1st show / 2nd hide) ==========
+        let lastClickTime = 0;
+        plyrEl.addEventListener('click', function (e) {
+          // Ignore clicks on actual buttons / controls / seek areas
+          if (
+            e.target.closest('.plyr__controls') ||
+            e.target.closest('.plyr__control') ||
+            e.target.closest('.center-seek-btn') ||
+            e.target.closest('.seek-zone') ||
+            e.target.closest('#mediaLoadingUI')
+          ) {
+            return;
+          }
+
+          const now = Date.now();
+          if (now - lastClickTime < 280) return; // prevent double fire
+          lastClickTime = now;
+
+          if (plyrEl.classList.contains('plyr--hide-controls')) {
+            player.toggleControls(true);   // show
+          } else {
+            player.toggleControls(false);  // hide immediately
+          }
+        });
       });
 
       player.on('enterfullscreen', lockLandscape);
@@ -1166,7 +1179,6 @@ function trackLabel(track) {
       vid.addEventListener('ratechange', function () { if (activeAudio) activeAudio.playbackRate = vid.playbackRate; });
       vid.addEventListener('seeking', function () { if (activeAudio && !activeAudio.paused) activeAudio.pause(); });
       vid.addEventListener('seeked', function () {
-        // Audio re-sync
         if (activeTrackIdx !== null && !isPreparingAudio) {
           dropNext();
           if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
@@ -1176,7 +1188,6 @@ function trackLabel(track) {
           }, 400);
         }
 
-        // Subtitle window re-sync
         if (activeSubIndex !== null && !isPreparingSubtitle) {
           loadSubtitleWindow(activeSubIndex, vid.currentTime);
         }
