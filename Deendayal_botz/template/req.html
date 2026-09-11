@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cinemaniacs Hub | {{file_name}}</title>
-  <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -65,104 +64,182 @@
     @keyframes pulseDot { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .4; transform: scale(.65); } }
 
     * { -webkit-tap-highlight-color: transparent; }
-    button:focus, button:focus-visible, .plyr__control:focus, a:focus { outline: none !important; box-shadow: none !important; }
+    button:focus, button:focus-visible, a:focus { outline: none !important; box-shadow: none !important; }
 
+    /* ===== YouTube-style custom player ===== */
     .player-box {
       position: relative; border-radius: var(--r); overflow: hidden; background: #000;
       box-shadow: 0 20px 50px rgba(0,0,0,.45); border: 1px solid var(--border);
       margin-top: 8px;
     }
-    .plyr { --plyr-color-main: var(--ember); }
-    .plyr.controls-locked .plyr__controls,
-    .plyr.controls-locked .plyr__control--overlaid { opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
-    .seek-blocked .plyr__progress input { pointer-events: none; }
-    .plyr--hide-controls .center-seek-btn { opacity: 0; visibility: hidden; pointer-events: none; }
-    .plyr__progress input[type=range] { height: 6px; }
-    .plyr--full-ui input[type=range]::-webkit-slider-thumb { transition: transform .15s ease; }
-    .plyr__progress:hover input[type=range]::-webkit-slider-thumb { transform: scale(1.3); }
-    .plyr__time--current { margin-left: 6px; }
-    .plyr__time--duration { display: inline-flex !important; }
-    .time-sep { color: var(--muted); margin: 0 4px; font-size: .85rem; }
-    .plyr__menu__container [role="menu"] {
-      max-height: 100px !important;
-      overflow-y: auto;
+    .yt-player {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #000;
+      overflow: hidden;
+      user-select: none;
+      touch-action: manipulation;
     }
-    .plyr--menu-open .center-seek-btn {
-      z-index: 1 !important;
+    .yt-player video {
+      width: 100%; height: 100%;
+      display: block; background: #000;
+      object-fit: contain;
     }
-    .plyr__control--overlaid {
-      width: 60px !important;
-      height: 60px !important;
-      border-radius: 50% !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      background: rgba(0,0,0,.55) !important;
-      padding: 0 !important;
+    .yt-player.seek-blocked .yt-seek { pointer-events: none; opacity: 0.5; }
+    .yt-player.controls-locked .yt-controls,
+    .yt-player.controls-locked .yt-big-play { opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
+
+    .yt-big-play {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      z-index: 5; opacity: 0; pointer-events: none;
+      transition: opacity 0.15s ease;
     }
-    .plyr__control--overlaid i {
-      font-size: 1.6rem;
-      color: #fff;
-      line-height: 1;
-      margin: 0;
+    .yt-player.show-ui .yt-big-play { opacity: 1; }
+    .yt-big-play-btn {
+      width: 68px; height: 48px;
+      background: rgba(0,0,0,0.7); border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; pointer-events: auto; z-index: 6;
     }
-    .plyr--playing:not(.plyr--hide-controls):not(.controls-locked) .plyr__control--overlaid {
-      opacity: 1 !important; visibility: visible !important; pointer-events: auto !important;
+    .yt-big-play-btn svg { width: 28px; height: 28px; fill: #fff; }
+    .yt-big-play-btn .icon-play { margin-left: 3px; display: none; }
+    .yt-big-play-btn .icon-pause { display: none; }
+    .yt-player.paused .yt-big-play-btn .icon-play { display: block; }
+    .yt-player:not(.paused) .yt-big-play-btn .icon-pause { display: block; }
+
+    .yt-seek-overlay {
+      position: absolute; top: 0; bottom: 0; width: 42%;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 4px;
+      opacity: 0; pointer-events: none; z-index: 4;
+      color: #fff; font-size: 13px; font-weight: 500;
+    }
+    .yt-seek-overlay.left {
+      left: 0;
+      background: radial-gradient(ellipse at left center, rgba(0,0,0,0.5) 0%, transparent 70%);
+      border-radius: 0 50% 50% 0;
+    }
+    .yt-seek-overlay.right {
+      right: 0;
+      background: radial-gradient(ellipse at right center, rgba(0,0,0,0.5) 0%, transparent 70%);
+      border-radius: 50% 0 0 50%;
+    }
+    .yt-seek-overlay.show { animation: ytSeekFlash 0.55s ease-out; }
+    @keyframes ytSeekFlash {
+      0% { opacity: 0; transform: scale(0.92); }
+      20% { opacity: 1; transform: scale(1); }
+      100% { opacity: 0; transform: scale(1); }
+    }
+    .yt-seek-arrows { display: flex; gap: 1px; }
+    .yt-seek-arrows svg { width: 20px; height: 20px; fill: #fff; }
+    /* path points left (rewind); flip only on the RIGHT for forward */
+    .yt-seek-overlay.right .yt-seek-arrows { transform: scaleX(-1); }
+
+    .yt-settings-wrap { position: relative; }
+    .yt-menu {
+      position: absolute; bottom: 48px; right: 0;
+      background: rgba(28,28,28,0.97); border-radius: 8px;
+      min-width: 180px; font-size: 14px; display: none;
+      overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5); z-index: 20;
+    }
+    .yt-menu.open { display: block; }
+    .yt-menu .item {
+      padding: 12px 16px; display: flex; justify-content: space-between;
+      align-items: center; cursor: pointer; color: #fff;
+    }
+    .yt-menu .item:active { background: rgba(255,255,255,0.1); }
+    .yt-menu .item.active { color: #ff0000; }
+    .yt-menu .item span { color: #aaa; font-size: 13px; }
+
+    .yt-time-combined {
+      font-size: 11px; color: #fff; white-space: nowrap;
+      font-variant-numeric: tabular-nums; padding: 0 4px; min-width: 72px;
     }
 
-    .center-seek-btn {
-      position: absolute; top: 50%; transform: translateY(-50%);
-      width: 46px; height: 46px; border-radius: 50%;
-      background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.25);
-      display: flex; align-items: center; justify-content: center;
-      color: #fff; font-size: 1.1rem; cursor: pointer; z-index: 35;
-      backdrop-filter: blur(4px); transition: background .15s ease, transform .15s ease;
+    .yt-tap-zone {
+      position: absolute; top: 0; bottom: 0; width: 40%; z-index: 3;
     }
-    .center-seek-btn:hover { background: rgba(0,0,0,.65); }
-    .center-seek-btn:active { transform: translateY(-50%) scale(.9); }
-    .center-seek-left { left: calc(50% - 90px); }
-    .center-seek-right { right: calc(50% - 90px); }
-    .plyr.controls-locked .center-seek-btn { opacity: 0; visibility: hidden; pointer-events: none; }
-    .seek-zone {
-      position: absolute; top: 0; bottom: 56px;
-      width: calc(50% - 70px); z-index: 2;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .seek-zone-left { left: 0; }
-    .seek-zone-right { right: 0; }
-    .seek-flash {
-      display: flex; flex-direction: column; align-items: center; gap: 4px;
-      color: #fff;
-      opacity: 0; transform: scale(.8); transition: opacity .15s ease, transform .15s ease;
+    .yt-tap-zone.left { left: 0; }
+    .yt-tap-zone.right { right: 0; }
+    .yt-tap-zone.center { left: 40%; width: 20%; }
+
+    .yt-controls {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      padding: 0 6px 8px;
+      background: linear-gradient(0deg, rgba(0,0,0,0.85) 0%, transparent 100%);
+      z-index: 10; opacity: 0; transform: translateY(8px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
       pointer-events: none;
     }
-    .seek-flash i { font-size: 1.3rem; text-shadow: 0 2px 8px rgba(0,0,0,.8); }
-    .seek-flash span { font-size: .78rem; font-weight: 700; text-shadow: 0 2px 8px rgba(0,0,0,.8); }
-    .seek-flash.show { opacity: 1; transform: scale(1); }
+    .yt-player.show-ui .yt-controls {
+      opacity: 1; transform: translateY(0); pointer-events: auto;
+    }
+    .yt-progress-row {
+      display: flex; align-items: center; gap: 6px; padding: 4px 4px 2px;
+    }
+    .yt-time {
+      font-size: 11px; color: #fff; min-width: 32px; text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .yt-seek {
+      position: relative; flex: 1; height: 28px;
+      display: flex; align-items: center; cursor: pointer; touch-action: none;
+    }
+    .yt-seek .track {
+      position: relative; width: 100%; height: 3px;
+      background: rgba(255,255,255,0.3); border-radius: 2px;
+      overflow: visible; transition: height 0.1s; pointer-events: none;
+    }
+    .yt-seek:active .track, .yt-seek.dragging .track { height: 5px; }
+    .yt-seek .buffer {
+      position: absolute; top: 0; left: 0; height: 100%;
+      background: rgba(255,255,255,0.5); width: 0%; border-radius: 2px; pointer-events: none;
+    }
+    .yt-seek .played {
+      position: absolute; top: 0; left: 0; height: 100%;
+      background: #ff0000; width: 0%; border-radius: 2px; pointer-events: none;
+    }
+    .yt-seek .thumb {
+      position: absolute; top: 50%; width: 14px; height: 14px;
+      border-radius: 50%; background: #ff0000;
+      transform: translate(-50%, -50%) scale(0);
+      transition: transform 0.12s ease; left: 0%; pointer-events: none;
+    }
+    .yt-seek:active .thumb, .yt-seek.dragging .thumb,
+    .yt-player.show-ui .yt-seek .thumb { transform: translate(-50%, -50%) scale(1); }
+    .yt-hover-preview {
+      position: absolute; bottom: 22px; transform: translateX(-50%);
+      background: rgba(28,28,28,0.95); border: 1px solid #444;
+      padding: 2px 6px; font-size: 11px; border-radius: 3px;
+      pointer-events: none; white-space: nowrap; display: none;
+    }
+    .yt-seek.dragging .yt-hover-preview { display: block; }
+    .yt-btn-row { display: flex; align-items: center; gap: 0; padding: 0; }
+    .yt-spacer { flex: 1; }
+    button.yt-ctrl {
+      background: none; border: none; color: #fff; cursor: pointer;
+      width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; opacity: 0.95; flex-shrink: 0;
+    }
+    button.yt-ctrl:active { opacity: 0.7; background: rgba(255,255,255,0.12); }
+    button.yt-ctrl svg { width: 26px; height: 26px; fill: #fff; }
+    .yt-vol-wrap { display: flex; align-items: center; }
+    .yt-vol-slider { width: 0; overflow: hidden; transition: width 0.2s ease; }
+    .yt-vol-wrap.active .yt-vol-slider { width: 72px; }
+    .yt-vol-slider input[type=range] { width: 68px; accent-color: #ff0000; height: 4px; }
 
     .custom-subs-overlay {
-      position: absolute;
-      left: 0; right: 0;
-      bottom: 10px;
-      display: flex;
-      justify-content: center;
-      pointer-events: none;
-      z-index: 5;
-      padding: 0 24px;
+      position: absolute; left: 0; right: 0; bottom: 70px;
+      display: flex; justify-content: center;
+      pointer-events: none; z-index: 8; padding: 0 24px;
     }
     .custom-subs-overlay span {
-      display: none;
-      background: rgba(0, 0, 0, 0.75);
-      color: #fff;
-      font-size: 1rem;
-      font-weight: 600;
-      line-height: 1.4;
-      text-align: center;
-      padding: 6px 14px;
-      border-radius: 6px;
-      white-space: pre-line;
-      text-shadow: 0 1px 3px rgba(0,0,0,.6);
-      max-width: 90%;
+      display: none; background: rgba(0,0,0,0.75); color: #fff;
+      font-size: 1rem; font-weight: 600; line-height: 1.4; text-align: center;
+      padding: 6px 14px; border-radius: 6px; white-space: pre-line;
+      text-shadow: 0 1px 3px rgba(0,0,0,.6); max-width: 90%;
     }
     .custom-subs-overlay.active span { display: inline-block; }
 
@@ -174,6 +251,11 @@
     .load-ring { width: 46px; height: 46px; border-radius: 50%; border: 3px solid rgba(255,255,255,.12); border-top-color: var(--ember); animation: spin .85s linear infinite; }
     .load-text { color: var(--muted); font-size: .9rem; font-weight: 500; letter-spacing: .5px; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .yt-player:fullscreen, .yt-player:-webkit-full-screen {
+      width: 100%; height: 100%; aspect-ratio: auto;
+    }
+    .yt-player:fullscreen video, .yt-player:-webkit-full-screen video { object-fit: contain; }
 
     .file-card { margin-top: 16px; background: var(--glass); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; backdrop-filter: blur(10px); }
     .file-title { font-family: var(--font-head); font-weight: 600; font-size: 1rem; line-height: 1.4; word-break: break-word; margin-bottom: 6px; }
@@ -281,21 +363,84 @@
 
   <div class="wrap">
     <div class="player-box">
-      <video id="player" playsinline preload="metadata" controls>
-        <source src="{{file_url}}">
-      </video>
-      <div class="center-seek-btn center-seek-left" id="centerSeekLeft"><i class="fa-solid fa-rotate-left"></i></div>
-      <div class="center-seek-btn center-seek-right" id="centerSeekRight"><i class="fa-solid fa-rotate-right"></i></div>
-      <div class="seek-zone seek-zone-left" id="seekLeft">
-        <div class="seek-flash" id="seekFlashLeft"><i class="fa-solid fa-backward"></i><span>10</span></div>
-      </div>
-      <div class="seek-zone seek-zone-right" id="seekRight">
-        <div class="seek-flash" id="seekFlashRight"><i class="fa-solid fa-forward"></i><span>10</span></div>
-      </div>
-      <div class="custom-subs-overlay" id="customSubsOverlay"><span id="customSubsText"></span></div>
-      <div id="mediaLoadingUI">
-        <div class="load-ring"></div>
-        <div class="load-text" id="mediaLoadingText">Loading…</div>
+      <div class="yt-player paused show-ui" id="ytPlayer">
+        <video id="player" playsinline webkit-playsinline preload="metadata"
+          src="{{file_url}}"></video>
+
+        <div class="yt-seek-overlay left" id="seekFlashLeft">
+          <div class="yt-seek-arrows">
+            <svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6 8.5 6V6l-8.5 6z"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6 8.5 6V6l-8.5 6z"/></svg>
+          </div>
+          <span>10 seconds</span>
+        </div>
+        <div class="yt-seek-overlay right" id="seekFlashRight">
+          <div class="yt-seek-arrows">
+            <svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6 8.5 6V6l-8.5 6z"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6 8.5 6V6l-8.5 6z"/></svg>
+          </div>
+          <span>10 seconds</span>
+        </div>
+
+        <div class="yt-tap-zone left" id="tapLeft"></div>
+        <div class="yt-tap-zone center" id="tapCenter"></div>
+        <div class="yt-tap-zone right" id="tapRight"></div>
+
+        <div class="yt-big-play" id="bigPlay">
+          <div class="yt-big-play-btn" id="bigPlayBtn">
+            <svg class="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            <svg class="icon-pause" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+          </div>
+        </div>
+
+        <div class="custom-subs-overlay" id="customSubsOverlay"><span id="customSubsText"></span></div>
+
+        <div class="yt-controls" id="ytControls">
+          <div class="yt-progress-row">
+            <div class="yt-seek" id="ytSeek">
+              <div class="yt-hover-preview" id="hoverPreview">0:00</div>
+              <div class="track">
+                <div class="buffer" id="bufferBar"></div>
+                <div class="played" id="playedBar"></div>
+              </div>
+              <div class="thumb" id="thumb"></div>
+            </div>
+          </div>
+          <div class="yt-btn-row">
+            <button class="yt-ctrl" id="playBtn" aria-label="Play" type="button"></button>
+            <div class="yt-vol-wrap" id="volWrap">
+              <button class="yt-ctrl" id="muteBtn" aria-label="Mute" type="button"></button>
+              <div class="yt-vol-slider">
+                <input type="range" id="volSlider" min="0" max="1" step="0.05" value="1" />
+              </div>
+            </div>
+            <span class="yt-time-combined" id="timeCombined">0:00 / 0:00</span>
+            <span class="yt-spacer"></span>
+            <div class="yt-settings-wrap">
+              <button class="yt-ctrl" id="settingsBtn" aria-label="Settings" type="button"></button>
+              <div class="yt-menu" id="settingsMenu">
+                <div class="item" data-menu="speed">Playback speed <span id="speedVal">Normal</span></div>
+              </div>
+              <div class="yt-menu" id="speedMenu">
+                <div class="item" data-back>‹ Back</div>
+                <div class="item speed-opt" data-speed="0.25">0.25x</div>
+                <div class="item speed-opt" data-speed="0.5">0.5x</div>
+                <div class="item speed-opt" data-speed="0.75">0.75x</div>
+                <div class="item speed-opt active" data-speed="1">Normal</div>
+                <div class="item speed-opt" data-speed="1.25">1.25x</div>
+                <div class="item speed-opt" data-speed="1.5">1.5x</div>
+                <div class="item speed-opt" data-speed="2">2x</div>
+              </div>
+            </div>
+            <button class="yt-ctrl" id="pipBtn" aria-label="Picture in Picture" type="button"></button>
+            <button class="yt-ctrl" id="fsBtn" aria-label="Fullscreen" type="button"></button>
+          </div>
+        </div>
+
+        <div id="mediaLoadingUI">
+          <div class="load-ring"></div>
+          <div class="load-text" id="mediaLoadingText">Loading…</div>
+        </div>
       </div>
     </div>
 
@@ -412,7 +557,6 @@
     <footer>© Cinemaniacs Hub · For personal use only</footer>
   </div>
 
-  <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
   <script>
     const STREAM_URL = "{{file_url}}";
     const AUDIO_WINDOW_SECONDS = 600;
@@ -659,14 +803,15 @@
       return lang || 'Unknown';
     }
     function getVideo() { return document.querySelector('#player'); }
+    function getYtPlayer() { return document.getElementById('ytPlayer'); }
 
     function showLoadingUI(show, text) {
       const el = document.getElementById('mediaLoadingUI');
       const txt = document.getElementById('mediaLoadingText');
-      const plyrEl = document.querySelector('.plyr');
+      const yt = getYtPlayer();
       if (txt && text) txt.textContent = text;
-      if (show) { if (el) el.classList.add('show'); if (plyrEl) plyrEl.classList.add('controls-locked'); }
-      else { if (el) el.classList.remove('show'); if (plyrEl) plyrEl.classList.remove('controls-locked'); }
+      if (show) { if (el) el.classList.add('show'); if (yt) yt.classList.add('controls-locked'); }
+      else { if (el) el.classList.remove('show'); if (yt) yt.classList.remove('controls-locked'); }
     }
     function updateLoadingUI() {
       if (isPreparingAudio || isPreparingSubtitle) {
@@ -681,14 +826,14 @@
     }
     function setPreparing(on) {
       isPreparingAudio = on;
-      const plyrEl = document.querySelector('.plyr');
-      if (plyrEl) plyrEl.classList.toggle('seek-blocked', on || isPreparingSubtitle);
+      const yt = getYtPlayer();
+      if (yt) yt.classList.toggle('seek-blocked', on || isPreparingSubtitle);
       updateLoadingUI();
     }
     function setPreparingSubtitle(on) {
       isPreparingSubtitle = on;
-      const plyrEl = document.querySelector('.plyr');
-      if (plyrEl) plyrEl.classList.toggle('seek-blocked', on || isPreparingAudio);
+      const yt = getYtPlayer();
+      if (yt) yt.classList.toggle('seek-blocked', on || isPreparingAudio);
       updateLoadingUI();
     }
 
@@ -722,9 +867,10 @@
     }
     function dropNext() { killAudioEl(nextAudio); nextAudio = null; nextAnchor = 0; nextReady = false; }
     function syncVolume() {
-      if (!player) return;
-      if (activeAudio) { activeAudio.volume = player.volume; activeAudio.muted = player.muted; }
-      if (nextAudio) { nextAudio.volume = player.volume; nextAudio.muted = player.muted; }
+      const vid = getVideo();
+      if (!vid) return;
+      if (activeAudio) { activeAudio.volume = vid.volume; activeAudio.muted = vid.muted; }
+      if (nextAudio) { nextAudio.volume = vid.volume; nextAudio.muted = vid.muted; }
     }
     function newAudioEl() {
       const el = document.createElement('audio');
@@ -781,7 +927,8 @@
       const el = nextAudio, anchor = nextAnchor;
       nextAudio = null; nextAnchor = 0; nextReady = false;
       if (!el || !vid) { killAudioEl(el); return; }
-      if (player) { el.volume = player.volume; el.muted = player.muted; }
+      const _v = getVideo();
+      if (_v) { el.volume = _v.volume; el.muted = _v.muted; }
       el.playbackRate = vid.playbackRate;
       const old = activeAudio;
       const myId = audioRequestId;
@@ -1041,108 +1188,312 @@
     document.addEventListener('DOMContentLoaded', function () {
       showLoadingUI(true, 'Loading…');
 
-      player = new Plyr('#player', {
-        controls: ['play-large', 'play', 'progress', 'current-time', 'duration', 'settings', 'fullscreen'],
-        settings: ['speed'],
-        captions: { active: false, update: false },
-        speed: { selected: 1, options: [0.5, 0.75, 1, 1.25, 1.5, 2] },
-        seekTime: 10
-      });
-      player.on('ready', function () {
-        var btn = document.querySelector('.plyr__control--overlaid');
-        if (!btn) return;
-        btn.innerHTML = '<i class="fa-solid fa-play"></i>';
-        player.on('play', function () { btn.innerHTML = '<i class="fa-solid fa-pause"></i>'; });
-        player.on('pause', function () { btn.innerHTML = '<i class="fa-solid fa-play"></i>'; });
-      });
+      /* ========== Custom YouTube-style player (no Plyr) ========== */
+      (function initYtPlayer() {
+        const ytPlayer = document.getElementById('ytPlayer');
+        const video = document.getElementById('player');
+        const playBtn = document.getElementById('playBtn');
+        const bigPlayBtn = document.getElementById('bigPlayBtn');
+        const muteBtn = document.getElementById('muteBtn');
+        const volSlider = document.getElementById('volSlider');
+        const volWrap = document.getElementById('volWrap');
+        const seek = document.getElementById('ytSeek');
+        const playedBar = document.getElementById('playedBar');
+        const bufferBar = document.getElementById('bufferBar');
+        const thumb = document.getElementById('thumb');
+        const hoverPreview = document.getElementById('hoverPreview');
+        const timeCombined = document.getElementById('timeCombined');
+        const fsBtn = document.getElementById('fsBtn');
+        const pipBtn = document.getElementById('pipBtn');
+        const settingsBtn = document.getElementById('settingsBtn');
+        const settingsMenu = document.getElementById('settingsMenu');
+        const speedMenu = document.getElementById('speedMenu');
+        const speedVal = document.getElementById('speedVal');
+        const controls = document.getElementById('ytControls');
 
-      player.on('ready', function () {
-        const controls = document.querySelector('.plyr__controls');
-        if (!controls) return;
-        const cur = controls.querySelector('.plyr__time--current');
-        const dur = controls.querySelector('.plyr__time--duration');
-        if (cur && dur && !controls.querySelector('.time-sep')) {
-          const sep = document.createElement('span');
-          sep.className = 'time-sep';
-          sep.textContent = '/';
-          dur.parentNode.insertBefore(sep, dur);
-        }
-        const plyrEl = document.querySelector('.plyr');
-        const loadingUI = document.getElementById('mediaLoadingUI');
-        const seekLeftEl = document.getElementById('seekLeft');
-        const seekRightEl = document.getElementById('seekRight');
-        const centerLeft = document.getElementById('centerSeekLeft');
-        const centerRight = document.getElementById('centerSeekRight');
-        const subsOverlayEl = document.getElementById('customSubsOverlay');
-        if (plyrEl) {
-          if (loadingUI) plyrEl.appendChild(loadingUI);
-          if (seekLeftEl) plyrEl.appendChild(seekLeftEl);
-          if (seekRightEl) plyrEl.appendChild(seekRightEl);
-          if (centerLeft) plyrEl.appendChild(centerLeft);
-          if (centerRight) plyrEl.appendChild(centerRight);
-          if (subsOverlayEl) plyrEl.appendChild(subsOverlayEl);
+        const icons = {
+          play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
+          pause: '<svg viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>',
+          volHigh: '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>',
+          volMute: '<svg viewBox="0 0 24 24"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>',
+          settings: '<svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.49.49 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 00-.48-.41h-3.84a.48.48 0 00-.48.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87a.48.48 0 00.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.48.48 0 00-.12-.61l-2.03-1.58zM12 15.6A3.6 3.6 0 1112 8.4a3.6 3.6 0 010 7.2z"/></svg>',
+          pip: '<svg viewBox="0 0 24 24"><path d="M19 7H9v6h10V7zm2-4H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16.02H3V4.98h18v14.04z"/></svg>',
+          fsOpen: '<svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
+          fsClose: '<svg viewBox="0 0 24 24"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>'
+        };
+        playBtn.innerHTML = icons.play;
+        muteBtn.innerHTML = icons.volHigh;
+        settingsBtn.innerHTML = icons.settings;
+        pipBtn.innerHTML = icons.pip;
+        fsBtn.innerHTML = icons.fsOpen;
+
+        function fmt(t) {
+          if (!isFinite(t)) return '0:00';
+          const h = Math.floor(t / 3600);
+          const m = Math.floor((t % 3600) / 60);
+          const s = Math.floor(t % 60).toString().padStart(2, '0');
+          return h > 0 ? h + ':' + m.toString().padStart(2,'0') + ':' + s : m + ':' + s;
         }
 
-        // ========== NEW: Toggle controls on click (1st show / 2nd hide) ==========
-        let lastClickTime = 0;
-        plyrEl.addEventListener('click', function (e) {
-          // Ignore clicks on actual buttons / controls / seek areas
-          if (
-            e.target.closest('.plyr__controls') ||
-            e.target.closest('.plyr__control') ||
-            e.target.closest('.center-seek-btn') ||
-            e.target.closest('.seek-zone') ||
-            e.target.closest('#mediaLoadingUI')
-          ) {
-            return;
+        function togglePlay() {
+          if (video.paused) video.play().catch(function(){});
+          else video.pause();
+        }
+        playBtn.addEventListener('click', function (e) { e.stopPropagation(); togglePlay(); });
+        bigPlayBtn.addEventListener('click', function (e) { e.stopPropagation(); togglePlay(); });
+
+        let hideTimer = null;
+        function showUI(autoHide) {
+          ytPlayer.classList.add('show-ui');
+          clearTimeout(hideTimer);
+          if (autoHide && !video.paused) {
+            hideTimer = setTimeout(function () { ytPlayer.classList.remove('show-ui'); }, 3000);
           }
+        }
+        function hideUI() {
+          ytPlayer.classList.remove('show-ui');
+          clearTimeout(hideTimer);
+        }
+        function onSurfaceTap() {
+          if (ytPlayer.classList.contains('show-ui')) hideUI();
+          else showUI(true);
+        }
 
-          const now = Date.now();
-          if (now - lastClickTime < 280) return; // prevent double fire
-          lastClickTime = now;
-
-          if (plyrEl.classList.contains('plyr--hide-controls')) {
-            player.toggleControls(true);   // show
-          } else {
-            player.toggleControls(false);  // hide immediately
+        video.addEventListener('play', function () {
+          ytPlayer.classList.remove('paused');
+          playBtn.innerHTML = icons.pause;
+          showUI(true);
+        });
+        video.addEventListener('pause', function () {
+          ytPlayer.classList.add('paused');
+          playBtn.innerHTML = icons.play;
+          showUI(false);
+        });
+        function updateTimeLabel() {
+          timeCombined.textContent = fmt(video.currentTime) + ' / ' + fmt(video.duration);
+        }
+        video.addEventListener('loadedmetadata', function () {
+          updateTimeLabel();
+        });
+        video.addEventListener('timeupdate', function () {
+          if (!isFinite(video.duration) || dragging) return;
+          const pct = (video.currentTime / video.duration) * 100;
+          playedBar.style.width = pct + '%';
+          thumb.style.left = pct + '%';
+          updateTimeLabel();
+        });
+        video.addEventListener('progress', function () {
+          if (video.buffered.length && video.duration) {
+            const end = video.buffered.end(video.buffered.length - 1);
+            bufferBar.style.width = (end / video.duration * 100) + '%';
           }
         });
-      });
+        video.addEventListener('volumechange', syncVolume);
 
-      player.on('enterfullscreen', lockLandscape);
-      player.on('exitfullscreen', unlockOrientation);
-      player.on('volumechange', syncVolume);
+        /* Seek bar */
+        let dragging = false;
+        function seekToClientX(clientX) {
+          const rect = seek.getBoundingClientRect();
+          return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+        }
+        function applySeek(pct) {
+          if (!isFinite(video.duration) || video.duration <= 0) return;
+          video.currentTime = pct * video.duration;
+          playedBar.style.width = (pct * 100) + '%';
+          thumb.style.left = (pct * 100) + '%';
+          hoverPreview.style.left = (pct * 100) + '%';
+          hoverPreview.textContent = fmt(pct * video.duration);
+          timeCombined.textContent = fmt(pct * video.duration) + ' / ' + fmt(video.duration);
+        }
+        function onSeekStart(clientX) {
+          dragging = true;
+          seek.classList.add('dragging');
+          applySeek(seekToClientX(clientX));
+          showUI(true);
+        }
+        function onSeekMove(clientX) {
+          if (!dragging) return;
+          applySeek(seekToClientX(clientX));
+        }
+        function onSeekEnd() {
+          if (!dragging) return;
+          dragging = false;
+          seek.classList.remove('dragging');
+        }
+        seek.addEventListener('mousedown', function (e) { e.preventDefault(); e.stopPropagation(); onSeekStart(e.clientX); });
+        window.addEventListener('mousemove', function (e) { if (dragging) onSeekMove(e.clientX); });
+        window.addEventListener('mouseup', onSeekEnd);
+        seek.addEventListener('touchstart', function (e) {
+          e.preventDefault(); e.stopPropagation();
+          if (e.touches.length) onSeekStart(e.touches[0].clientX);
+        }, { passive: false });
+        seek.addEventListener('touchmove', function (e) {
+          if (!dragging) return;
+          e.preventDefault(); e.stopPropagation();
+          if (e.touches.length) onSeekMove(e.touches[0].clientX);
+        }, { passive: false });
+        seek.addEventListener('touchend', function (e) { e.stopPropagation(); onSeekEnd(); });
+        seek.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (!dragging) applySeek(seekToClientX(e.clientX));
+        });
+
+        /* Volume */
+        function updateVolIcon() {
+          muteBtn.innerHTML = (video.muted || video.volume === 0) ? icons.volMute : icons.volHigh;
+        }
+        muteBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          video.muted = !video.muted;
+          updateVolIcon();
+          syncVolume();
+          showUI(true);
+        });
+        volSlider.addEventListener('input', function () {
+          video.volume = +volSlider.value;
+          video.muted = video.volume === 0;
+          updateVolIcon();
+          syncVolume();
+        });
+        volWrap.addEventListener('click', function (e) { e.stopPropagation(); });
+
+        /* Settings / speed */
+        settingsBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          settingsMenu.classList.toggle('open');
+          speedMenu.classList.remove('open');
+          showUI(true);
+        });
+        var speedMenuBtn = settingsMenu.querySelector('[data-menu="speed"]');
+        if (speedMenuBtn) {
+          speedMenuBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            settingsMenu.classList.remove('open');
+            speedMenu.classList.add('open');
+          });
+        }
+        var backBtn = speedMenu.querySelector('[data-back]');
+        if (backBtn) {
+          backBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            speedMenu.classList.remove('open');
+            settingsMenu.classList.add('open');
+          });
+        }
+        speedMenu.querySelectorAll('.speed-opt').forEach(function (opt) {
+          opt.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var rate = parseFloat(opt.dataset.speed);
+            video.playbackRate = rate;
+            speedVal.textContent = rate === 1 ? 'Normal' : rate + 'x';
+            speedMenu.querySelectorAll('.speed-opt').forEach(function (o) { o.classList.remove('active'); });
+            opt.classList.add('active');
+            speedMenu.classList.remove('open');
+          });
+        });
+        document.addEventListener('click', function () {
+          settingsMenu.classList.remove('open');
+          speedMenu.classList.remove('open');
+        });
+
+        /* PiP */
+        pipBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          try {
+            if (document.pictureInPictureElement) {
+              document.exitPictureInPicture();
+            } else if (video.requestPictureInPicture) {
+              video.requestPictureInPicture();
+            }
+          } catch (err) {}
+          showUI(true);
+        });
+
+        /* Fullscreen */
+        fsBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+            (ytPlayer.requestFullscreen || ytPlayer.webkitRequestFullscreen || function(){}).call(ytPlayer);
+            lockLandscape();
+          } else {
+            (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
+            unlockOrientation();
+          }
+        });
+        function onFsChange() {
+          const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+          fsBtn.innerHTML = isFs ? icons.fsClose : icons.fsOpen;
+          if (!isFs) unlockOrientation();
+        }
+        document.addEventListener('fullscreenchange', onFsChange);
+        document.addEventListener('webkitfullscreenchange', onFsChange);
+
+        /* Double-tap seek (does NOT show controls) + single tap toggles controls */
+        function makeDoubleTap(zone, overlay, direction) {
+          let lastTap = 0, tapCount = 0, singleTapTimer = null, resetTimer = null;
+          const DOUBLE_MS = 280, RESET_MS = 1000;
+          zone.addEventListener('click', function (e) {
+            e.stopPropagation();
+            const now = Date.now();
+            if (now - lastTap < DOUBLE_MS) {
+              clearTimeout(singleTapTimer);
+              singleTapTimer = null;
+              tapCount++;
+              video.currentTime = direction > 0
+                ? Math.min(video.duration || 0, video.currentTime + 10)
+                : Math.max(0, video.currentTime - 10);
+              const span = overlay.querySelector('span');
+              if (span) span.textContent = (tapCount * 10) + ' seconds';
+              overlay.classList.remove('show');
+              void overlay.offsetWidth;
+              overlay.classList.add('show');
+              clearTimeout(resetTimer);
+              resetTimer = setTimeout(function () { tapCount = 0; }, RESET_MS);
+            } else {
+              tapCount = 1;
+              const span = overlay.querySelector('span');
+              if (span) span.textContent = '10 seconds';
+              clearTimeout(singleTapTimer);
+              singleTapTimer = setTimeout(function () {
+                singleTapTimer = null;
+                onSurfaceTap();
+              }, DOUBLE_MS);
+            }
+            lastTap = now;
+          });
+        }
+        makeDoubleTap(document.getElementById('tapLeft'), document.getElementById('seekFlashLeft'), -1);
+        makeDoubleTap(document.getElementById('tapRight'), document.getElementById('seekFlashRight'), 1);
+        document.getElementById('tapCenter').addEventListener('click', function (e) {
+          e.stopPropagation();
+          onSurfaceTap();
+        });
+
+        controls.addEventListener('click', function (e) { e.stopPropagation(); });
+        controls.addEventListener('touchstart', function (e) { e.stopPropagation(); }, { passive: true });
+
+        video.style.touchAction = 'manipulation';
+        video.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); });
+        ytPlayer.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+        /* Compatibility shim for remaining code that expected Plyr `player` */
+        player = {
+          get volume() { return video.volume; },
+          set volume(v) { video.volume = v; },
+          get muted() { return video.muted; },
+          set muted(m) { video.muted = m; },
+          on: function () {},
+          toggleControls: function (show) {
+            if (show) showUI(false);
+            else hideUI();
+          }
+        };
+
+        showUI(false);
+      })();
 
       requestAnimationFrame(paintCue);
 
-      (function () {
-        const vid = getVideo();
-        vid.style.touchAction = 'manipulation';
-        vid.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); });
-        function setupZone(zoneId, flashId, direction) {
-          const zone = document.getElementById(zoneId);
-          const flash = document.getElementById(flashId);
-          zone.addEventListener('dblclick', function (e) {
-            e.preventDefault(); e.stopPropagation();
-            const newTime = Math.max(0, Math.min(vid.duration || Infinity, vid.currentTime + direction * 10));
-            vid.currentTime = newTime;
-            flash.classList.add('show');
-            setTimeout(function () { flash.classList.remove('show'); }, 450);
-          });
-        }
-        setupZone('seekLeft', 'seekFlashLeft', -1);
-        setupZone('seekRight', 'seekFlashRight', 1);
-      })();
-      document.getElementById('centerSeekLeft').addEventListener('click', function (e) {
-        e.stopPropagation();
-        const vid = getVideo();
-        vid.currentTime = Math.max(0, vid.currentTime - 10);
-      });
-      document.getElementById('centerSeekRight').addEventListener('click', function (e) {
-        e.stopPropagation();
-        const vid = getVideo();
-        vid.currentTime = Math.min(vid.duration || Infinity, vid.currentTime + 10);
-      });
       document.addEventListener('keydown', function (e) {
         if (!isPreparingAudio && !isPreparingSubtitle) return;
         const key = e.key.toLowerCase();
