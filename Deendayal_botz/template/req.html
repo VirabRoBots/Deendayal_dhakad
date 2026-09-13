@@ -109,6 +109,18 @@
     .yt-player.paused .yt-big-play-btn .icon-play { display: block; }
     .yt-player:not(.paused) .yt-big-play-btn .icon-pause { display: block; }
 
+    .yt-speed-indicator {
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%) translateY(-6px);
+      background: rgba(0,0,0,0.8); color: #fff;
+      padding: 7px 16px; border-radius: 20px;
+      font-size: 13px; font-weight: 700; letter-spacing: .3px;
+      display: flex; align-items: center; gap: 6px;
+      opacity: 0; pointer-events: none; z-index: 15;
+      transition: opacity 0.15s ease, transform 0.15s ease;
+    }
+    .yt-speed-indicator.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    .yt-speed-indicator svg { width: 16px; height: 16px; fill: #fff; }
+
     .yt-seek-overlay {
       position: absolute; top: 0; bottom: 0; width: 42%;
       display: flex; align-items: center; justify-content: center;
@@ -134,7 +146,6 @@
     }
     .yt-seek-arrows { display: flex; gap: 1px; }
     .yt-seek-arrows svg { width: 20px; height: 20px; fill: #fff; }
-    /* path points left (rewind); flip only on the RIGHT for forward */
     .yt-seek-overlay.right .yt-seek-arrows { transform: scaleX(-1); }
 
     .yt-settings-wrap { position: relative; }
@@ -150,7 +161,7 @@
       align-items: center; cursor: pointer; color: #fff;
     }
     .yt-menu .item:active { background: rgba(255,255,255,0.1); }
-    .yt-menu .item.active { color: #ff0000; }
+    .yt-menu .item.active { color: var(--ember); }
     .yt-menu .item span { color: #aaa; font-size: 13px; }
 
     .yt-time-combined {
@@ -179,10 +190,6 @@
     .yt-progress-row {
       display: flex; align-items: center; gap: 6px; padding: 4px 4px 2px;
     }
-    .yt-time {
-      font-size: 11px; color: #fff; min-width: 32px; text-align: center;
-      font-variant-numeric: tabular-nums;
-    }
     .yt-seek {
       position: relative; flex: 1; height: 28px;
       display: flex; align-items: center; cursor: pointer; touch-action: none;
@@ -199,11 +206,11 @@
     }
     .yt-seek .played {
       position: absolute; top: 0; left: 0; height: 100%;
-      background: #ff0000; width: 0%; border-radius: 2px; pointer-events: none;
+      background: var(--ember); width: 0%; border-radius: 2px; pointer-events: none;
     }
     .yt-seek .thumb {
       position: absolute; top: 50%; width: 14px; height: 14px;
-      border-radius: 50%; background: #ff0000;
+      border-radius: 50%; background: var(--ember);
       transform: translate(-50%, -50%) scale(0);
       transition: transform 0.12s ease; left: 0%; pointer-events: none;
     }
@@ -216,19 +223,32 @@
       pointer-events: none; white-space: nowrap; display: none;
     }
     .yt-seek.dragging .yt-hover-preview { display: block; }
-    .yt-btn-row { display: flex; align-items: center; gap: 0; padding: 0; }
+    .yt-btn-row { display: flex; align-items: center; gap: 2px; padding: 0; }
     .yt-spacer { flex: 1; }
     button.yt-ctrl {
       background: none; border: none; color: #fff; cursor: pointer;
-      width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+      width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;
       border-radius: 50%; opacity: 0.95; flex-shrink: 0;
     }
     button.yt-ctrl:active { opacity: 0.7; background: rgba(255,255,255,0.12); }
-    button.yt-ctrl svg { width: 26px; height: 26px; fill: #fff; }
+    button.yt-ctrl svg { width: 18px; height: 18px; fill: #fff; }
+    button.yt-ctrl.cast-connected svg { fill: #00e676; }
+    button.yt-ctrl.cast-connected svg path { fill: #00e676; }
+    /* Cast button hidden by default — only revealed by JS when a working cast route is confirmed */
+    #castBtn { display: none; }
+    #castBtn.cast-available { display: flex; }
+    /* AirPlay button hidden by default — only revealed by JS when Safari confirms an AirPlay device is nearby */
+    #airplayBtn { display: none; }
+    #airplayBtn.cast-available { display: flex; }
     .yt-vol-wrap { display: flex; align-items: center; }
     .yt-vol-slider { width: 0; overflow: hidden; transition: width 0.2s ease; }
-    .yt-vol-wrap.active .yt-vol-slider { width: 72px; }
-    .yt-vol-slider input[type=range] { width: 68px; accent-color: #ff0000; height: 4px; }
+    .yt-vol-wrap.active .yt-vol-slider { width: 60px; }
+    .yt-vol-slider input[type=range] { width: 56px; accent-color: var(--ember); height: 3px; }
+    .yt-vol-boost-label {
+      font-size: 10px; color: var(--ember); font-weight: 700; white-space: nowrap;
+      opacity: 0; max-width: 0; overflow: hidden; transition: opacity 0.15s ease, max-width 0.15s ease;
+    }
+    .yt-vol-boost-label.show { opacity: 1; max-width: 40px; margin-left: 4px; }
 
     .custom-subs-overlay {
       position: absolute; left: 0; right: 0; bottom: 70px;
@@ -386,6 +406,11 @@
         <div class="yt-tap-zone center" id="tapCenter"></div>
         <div class="yt-tap-zone right" id="tapRight"></div>
 
+        <div class="yt-speed-indicator" id="speedIndicator">
+          <svg viewBox="0 0 24 24"><path d="M4 6l6 6-6 6V6zm7 0l6 6-6 6V6z"/></svg>
+          <span>2x speed</span>
+        </div>
+
         <div class="yt-big-play" id="bigPlay">
           <div class="yt-big-play-btn" id="bigPlayBtn">
             <svg class="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -407,12 +432,12 @@
             </div>
           </div>
           <div class="yt-btn-row">
-            <button class="yt-ctrl" id="playBtn" aria-label="Play" type="button"></button>
             <div class="yt-vol-wrap" id="volWrap">
               <button class="yt-ctrl" id="muteBtn" aria-label="Mute" type="button"></button>
               <div class="yt-vol-slider">
-                <input type="range" id="volSlider" min="0" max="1" step="0.05" value="1" />
+                <input type="range" id="volSlider" min="0" max="3" step="0.05" value="1" />
               </div>
+              <span class="yt-vol-boost-label" id="volBoostLabel">100%</span>
             </div>
             <span class="yt-time-combined" id="timeCombined">0:00 / 0:00</span>
             <span class="yt-spacer"></span>
@@ -432,6 +457,8 @@
                 <div class="item speed-opt" data-speed="2">2x</div>
               </div>
             </div>
+            <button class="yt-ctrl" id="castBtn" aria-label="Cast" type="button" title="Cast to device"></button>
+            <button class="yt-ctrl" id="airplayBtn" aria-label="AirPlay" type="button" title="AirPlay"></button>
             <button class="yt-ctrl" id="pipBtn" aria-label="Picture in Picture" type="button"></button>
             <button class="yt-ctrl" id="fsBtn" aria-label="Fullscreen" type="button"></button>
           </div>
@@ -557,6 +584,9 @@
     <footer>© Cinemaniacs Hub · For personal use only</footer>
   </div>
 
+  <!-- Google Cast SDK -->
+  <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
+
   <script>
     const STREAM_URL = "{{file_url}}";
     const AUDIO_WINDOW_SECONDS = 600;
@@ -578,6 +608,7 @@
     let audioCtx = null;
     let vidGainNode = null;
     let useFallbackMute = false;
+    let volumeBoost = 1;
     let audioRequestId = 0;
     let seekDebounceTimer = null;
     let audioMode = 'pending';
@@ -593,6 +624,11 @@
     let playAfterSubPrepare = false;
     let subWindowStart = 0;
     let subWindowEnd = 0;
+
+    // ========== Cast state ==========
+    let castContext = null;
+    let castSession = null;
+    let isCasting = false;
 
     function buildAudioUrl(streamIndex, atTime) {
       const u = new URL(STREAM_URL, window.location.origin);
@@ -851,11 +887,11 @@
           vidGainNode.connect(audioCtx.destination);
           vid.__audioConnected = true;
         }
-        if (vidGainNode) vidGainNode.gain.value = (activeTrackIdx !== null) ? 0 : 1;
+        if (vidGainNode) vidGainNode.gain.value = (activeTrackIdx !== null) ? 0 : volumeBoost;
       } catch (e) { useFallbackMute = true; }
     }
     function silenceVideo(vid) { initAudioContext(vid); if (useFallbackMute) { if (vid) vid.muted = true; return; } if (vidGainNode) vidGainNode.gain.value = 0; }
-    function restoreVideoAudio(vid) { if (useFallbackMute) { if (vid) vid.muted = false; return; } if (vidGainNode) vidGainNode.gain.value = 1; }
+    function restoreVideoAudio(vid) { if (useFallbackMute) { if (vid) vid.muted = false; return; } if (vidGainNode) vidGainNode.gain.value = volumeBoost; }
     function killAudioEl(el) { if (!el) return; try { el.pause(); el.removeAttribute('src'); el.load(); el.remove(); } catch (e) {} }
     function destroyAudio() { killAudioEl(activeAudio); activeAudio = null; }
     function activate(el, anchor) {
@@ -872,12 +908,36 @@
       if (activeAudio) { activeAudio.volume = vid.volume; activeAudio.muted = vid.muted; }
       if (nextAudio) { nextAudio.volume = vid.volume; nextAudio.muted = vid.muted; }
     }
+    function connectAudioBoost(el) {
+      if (useFallbackMute) return null;
+      try {
+        if (!audioCtx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) { useFallbackMute = true; return null; }
+          audioCtx = new AC();
+        }
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const src = audioCtx.createMediaElementSource(el);
+        const gain = audioCtx.createGain();
+        gain.gain.value = volumeBoost;
+        src.connect(gain);
+        gain.connect(audioCtx.destination);
+        el.__boostGain = gain;
+        return gain;
+      } catch (e) { return null; }
+    }
+    function applyBoostToAll() {
+      if (vidGainNode) vidGainNode.gain.value = (activeTrackIdx !== null) ? 0 : volumeBoost;
+      if (activeAudio && activeAudio.__boostGain) activeAudio.__boostGain.gain.value = volumeBoost;
+      if (nextAudio && nextAudio.__boostGain) nextAudio.__boostGain.gain.value = volumeBoost;
+    }
     function newAudioEl() {
       const el = document.createElement('audio');
       el.preload = 'auto'; el.style.display = 'none';
       if ('preservesPitch' in el) el.preservesPitch = true;
       if ('webkitPreservesPitch' in el) el.webkitPreservesPitch = true;
       document.body.appendChild(el);
+      connectAudioBoost(el);
       return el;
     }
     function windowEnd() { return audioAnchor + AUDIO_WINDOW_SECONDS; }
@@ -1185,18 +1245,205 @@
       try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) {}
     }
 
+    // ========== CAST FUNCTIONALITY (only shown when it can actually work) ==========
+    // Google's cast_sender.js decides whether to fire __onGCastApiAvailable(true)
+    // by sniffing the user-agent for "Chrome" — it does NOT check if casting will
+    // truly work. Samsung Internet, UC Browser, Opera, Vivaldi, Edge, etc. all
+    // include "Chrome/xxx" in their UA for site-compatibility reasons, so Google's
+    // own script gets fooled into saying "available" on browsers where it isn't.
+    // So we add our own stricter check on top of Google's callback.
+    function isRealChrome() {
+      const ua = navigator.userAgent;
+      const isChromium = /Chrome\/[0-9.]+/.test(ua);
+      const isEdge = /Edg\//.test(ua);
+      const isOpera = /OPR\//.test(ua);
+      const isSamsung = /SamsungBrowser/.test(ua);
+      const isUC = /UCBrowser|UCWEB/.test(ua);
+      const isVivaldi = /Vivaldi/.test(ua);
+      const isFirefox = /Firefox/.test(ua);
+      const isBrave = (navigator.brave !== undefined);
+      const isMiui = /MiuiBrowser/.test(ua);
+      const isHuawei = /HuaweiBrowser|HMSCore/.test(ua);
+      return isChromium && !isEdge && !isOpera && !isSamsung && !isUC &&
+             !isVivaldi && !isFirefox && !isBrave && !isMiui && !isHuawei;
+    }
+
+    function initCast() {
+      const castBtn = document.getElementById('castBtn');
+      if (!castBtn) return;
+
+      if (!isRealChrome()) {
+        // Don't even wait for Google's script — we already know this browser's
+        // "Chrome" signal can't be trusted. Button stays hidden, no timeout needed.
+        castBtn.classList.remove('cast-available');
+        window['__onGCastApiAvailable'] = function () { /* ignored on this browser */ };
+        return;
+      }
+
+      const castIcon = '<svg viewBox="0 0 24 24"><path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11zm20-7H3c-1.1 0-2 .9-2 2v3h2V5h18v14h-7v2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>';
+      const castConnectedIcon = '<svg viewBox="0 0 24 24"><path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm18-7H3v2h16v10h-7v2h7c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zM1 10v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11z"/></svg>';
+
+      castBtn.innerHTML = castIcon;
+      // Button starts hidden (see CSS #castBtn{display:none}). It's revealed only in
+      // the __onGCastApiAvailable(true) branch below — i.e. only when the browser
+      // actually has a working Cast route. If that callback never fires (Samsung
+      // Internet, Firefox, iOS Safari, etc.) the button simply stays hidden forever,
+      // and nothing else in the page changes.
+
+      // Safety net: some browsers load cast_sender.js but never call the callback
+      // at all (it's a Chrome-only script). If nothing happens within a few seconds,
+      // we know Cast isn't really usable here, so we leave the button hidden.
+      const noCastTimeout = setTimeout(function () {
+        if (!castContext) {
+          castBtn.classList.remove('cast-available');
+        }
+      }, 4000);
+
+      window['__onGCastApiAvailable'] = function (isAvailable) {
+        clearTimeout(noCastTimeout);
+
+        if (!isAvailable || !isRealChrome() || typeof chrome === 'undefined' || !chrome.cast || !cast.framework) {
+          castBtn.classList.remove('cast-available');
+          return;
+        }
+
+        castContext = cast.framework.CastContext.getInstance();
+        castContext.setOptions({
+          receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+          autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+        });
+
+        // Only reveal the button once the framework confirms a real Cast route
+        // exists for this browser/session.
+        castBtn.classList.add('cast-available');
+
+        castContext.addEventListener(
+          cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+          function (event) {
+            switch (event.sessionState) {
+              case cast.framework.SessionState.SESSION_STARTED:
+              case cast.framework.SessionState.SESSION_RESUMED:
+                isCasting = true;
+                castSession = castContext.getCurrentSession();
+                castBtn.classList.add('cast-connected');
+                castBtn.innerHTML = castConnectedIcon;
+                loadMediaToCast();
+                break;
+              case cast.framework.SessionState.SESSION_ENDED:
+                isCasting = false;
+                castSession = null;
+                castBtn.classList.remove('cast-connected');
+                castBtn.innerHTML = castIcon;
+                break;
+            }
+          }
+        );
+      };
+
+      castBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!castContext) return; // shouldn't happen since button is hidden until ready
+
+        if (isCasting && castSession) {
+          castSession.endSession(true);
+        } else {
+          castContext.requestSession().then(function () {
+            // success handled by event listener
+          }).catch(function (err) {
+            console.log('Cast request cancelled or failed', err);
+          });
+        }
+      });
+    }
+
+    function loadMediaToCast() {
+      if (!castSession) return;
+
+      const vid = getVideo();
+      const currentTime = vid ? vid.currentTime : 0;
+      const isPaused = vid ? vid.paused : true;
+
+      const mediaInfo = new chrome.cast.media.MediaInfo(STREAM_URL, 'video/mp4');
+      mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+      mediaInfo.metadata.title = '{{file_name}}';
+      mediaInfo.streamType = chrome.cast.media.StreamType.BUFFERED;
+
+      const request = new chrome.cast.media.LoadRequest(mediaInfo);
+      request.currentTime = currentTime;
+      request.autoplay = !isPaused;
+
+      castSession.loadMedia(request).then(function () {
+        console.log('Media loaded on Cast device');
+      }).catch(function (err) {
+        console.error('Error loading media on Cast:', err);
+        alert('Failed to cast video. The file may not be compatible with Chromecast.');
+      });
+    }
+
+    // ========== AIRPLAY FUNCTIONALITY (Safari only, real device detection) ==========
+    // Uses Apple's actual WebKit AirPlay API — not a browser sniff. The button only
+    // appears when the browser both supports the API AND reports a real AirPlay
+    // device is currently reachable on the network. No support / no device = hidden.
+    function initAirPlay() {
+      const airplayBtn = document.getElementById('airplayBtn');
+      const vid = getVideo();
+      if (!airplayBtn || !vid) return;
+
+      const airplayIcon = '<svg viewBox="0 0 24 24"><path d="M6 22h12l-6-6zM21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h4v-2H3V5h18v12h-4v2h4c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>';
+      const airplayConnectedIcon = '<svg viewBox="0 0 24 24"><path d="M6 22h12l-6-6zM21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h4v-2H3V5h18v12h-4v2h4c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" fill="#00e676"/></svg>';
+      airplayBtn.innerHTML = airplayIcon;
+
+      // If this browser doesn't even have the API, there is nothing to wait for —
+      // leave the button hidden permanently and stop here.
+      if (typeof vid.webkitShowPlaybackTargetPicker !== 'function') {
+        return;
+      }
+
+      // Safari fires this event whenever it discovers/loses a nearby AirPlay
+      // receiver (Apple TV, AirPlay-capable smart TV/speaker, etc.). Only then
+      // do we reveal the button.
+      vid.addEventListener('webkitplaybacktargetavailabilitychanged', function (event) {
+        if (event.availability === 'available') {
+          airplayBtn.classList.add('cast-available');
+        } else {
+          airplayBtn.classList.remove('cast-available');
+        }
+      });
+
+      // Reflects when the video is actually playing out to an AirPlay device
+      // right now, so the icon can turn green like the Cast icon does.
+      vid.addEventListener('webkitcurrentplaybacktargetiswirelesschanged', function () {
+        airplayBtn.innerHTML = vid.webkitCurrentPlaybackTargetIsWireless ? airplayConnectedIcon : airplayIcon;
+        airplayBtn.classList.toggle('cast-connected', !!vid.webkitCurrentPlaybackTargetIsWireless);
+      });
+
+      airplayBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        try {
+          vid.webkitShowPlaybackTargetPicker();
+        } catch (err) {
+          console.log('AirPlay picker failed', err);
+        }
+      });
+    }
+
     document.addEventListener('DOMContentLoaded', function () {
       showLoadingUI(true, 'Loading…');
+
+      // Initialize Cast (button stays hidden unless a working route is confirmed)
+      initCast();
+      // Initialize AirPlay (button stays hidden unless Safari confirms a nearby device)
+      initAirPlay();
 
       /* ========== Custom YouTube-style player (no Plyr) ========== */
       (function initYtPlayer() {
         const ytPlayer = document.getElementById('ytPlayer');
         const video = document.getElementById('player');
-        const playBtn = document.getElementById('playBtn');
         const bigPlayBtn = document.getElementById('bigPlayBtn');
         const muteBtn = document.getElementById('muteBtn');
         const volSlider = document.getElementById('volSlider');
         const volWrap = document.getElementById('volWrap');
+        const volBoostLabel = document.getElementById('volBoostLabel');
         const seek = document.getElementById('ytSeek');
         const playedBar = document.getElementById('playedBar');
         const bufferBar = document.getElementById('bufferBar');
@@ -1221,7 +1468,6 @@
           fsOpen: '<svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>',
           fsClose: '<svg viewBox="0 0 24 24"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>'
         };
-        playBtn.innerHTML = icons.play;
         muteBtn.innerHTML = icons.volHigh;
         settingsBtn.innerHTML = icons.settings;
         pipBtn.innerHTML = icons.pip;
@@ -1239,7 +1485,6 @@
           if (video.paused) video.play().catch(function(){});
           else video.pause();
         }
-        playBtn.addEventListener('click', function (e) { e.stopPropagation(); togglePlay(); });
         bigPlayBtn.addEventListener('click', function (e) { e.stopPropagation(); togglePlay(); });
 
         let hideTimer = null;
@@ -1261,13 +1506,17 @@
 
         video.addEventListener('play', function () {
           ytPlayer.classList.remove('paused');
-          playBtn.innerHTML = icons.pause;
           showUI(true);
         });
         video.addEventListener('pause', function () {
           ytPlayer.classList.add('paused');
-          playBtn.innerHTML = icons.play;
           showUI(false);
+          if (isSpeedBoosted) {
+            isSpeedBoosted = false;
+            video.playbackRate = preBoostRate;
+            showSpeedIndicator(false);
+          }
+          cancelPendingPress();
         });
         function updateTimeLabel() {
           timeCombined.textContent = fmt(video.currentTime) + ' / ' + fmt(video.duration);
@@ -1338,22 +1587,30 @@
           if (!dragging) applySeek(seekToClientX(e.clientX));
         });
 
-        /* Volume */
+        /* Volume (tap icon to reveal slider; slider goes past 100% for boost) */
         function updateVolIcon() {
           muteBtn.innerHTML = (video.muted || video.volume === 0) ? icons.volMute : icons.volHigh;
         }
         muteBtn.addEventListener('click', function (e) {
           e.stopPropagation();
+          initAudioContext(video);
+          volWrap.classList.toggle('active');
           video.muted = !video.muted;
           updateVolIcon();
           syncVolume();
           showUI(true);
         });
         volSlider.addEventListener('input', function () {
-          video.volume = +volSlider.value;
-          video.muted = video.volume === 0;
+          const val = +volSlider.value;
+          video.volume = Math.min(val, 1);
+          volumeBoost = Math.max(val, 1);
+          video.muted = val === 0;
+          applyBoostToAll();
           updateVolIcon();
           syncVolume();
+          const pct = Math.round(val * 100);
+          volBoostLabel.textContent = pct + '%';
+          volBoostLabel.classList.toggle('show', val > 1);
         });
         volWrap.addEventListener('click', function (e) { e.stopPropagation(); });
 
@@ -1428,12 +1685,76 @@
         document.addEventListener('fullscreenchange', onFsChange);
         document.addEventListener('webkitfullscreenchange', onFsChange);
 
-        /* Double-tap seek (does NOT show controls) + single tap toggles controls */
+        /* ========== Long-press to 2x speed (YouTube-style) ========== */
+        const LONG_PRESS_MS = 500;
+        const BOOST_RATE = 2;
+        const speedIndicator = document.getElementById('speedIndicator');
+        const tapLeftZone = document.getElementById('tapLeft');
+        const tapCenterZone = document.getElementById('tapCenter');
+        const tapRightZone = document.getElementById('tapRight');
+        let speedPressTimer = null;
+        let isSpeedBoosted = false;
+        let preBoostRate = 1;
+        let longPressFired = false; // consumed once by whichever click it would otherwise trigger
+        let pressStartX = 0, pressStartY = 0;
+        const MOVE_CANCEL_PX = 12;
+
+        function showSpeedIndicator(show) {
+          if (show) speedIndicator.classList.add('show');
+          else speedIndicator.classList.remove('show');
+        }
+        function startSpeedPress(clientX, clientY) {
+          if (speedPressTimer || video.paused) return;
+          pressStartX = clientX; pressStartY = clientY;
+          speedPressTimer = setTimeout(function () {
+            speedPressTimer = null;
+            if (video.paused) return;
+            preBoostRate = video.playbackRate;
+            video.playbackRate = BOOST_RATE;
+            isSpeedBoosted = true;
+            longPressFired = true;
+            showSpeedIndicator(true);
+          }, LONG_PRESS_MS);
+        }
+        function cancelPendingPress() {
+          if (speedPressTimer) { clearTimeout(speedPressTimer); speedPressTimer = null; }
+        }
+        function endSpeedPress() {
+          cancelPendingPress();
+          if (isSpeedBoosted) {
+            video.playbackRate = preBoostRate;
+            isSpeedBoosted = false;
+            showSpeedIndicator(false);
+          }
+        }
+        function maybeCancelOnMove(clientX, clientY) {
+          if (!speedPressTimer) return;
+          if (Math.abs(clientX - pressStartX) > MOVE_CANCEL_PX || Math.abs(clientY - pressStartY) > MOVE_CANCEL_PX) {
+            cancelPendingPress();
+          }
+        }
+        [tapLeftZone, tapCenterZone, tapRightZone].forEach(function (zone) {
+          zone.addEventListener('mousedown', function (e) { startSpeedPress(e.clientX, e.clientY); });
+          zone.addEventListener('mousemove', function (e) { maybeCancelOnMove(e.clientX, e.clientY); });
+          zone.addEventListener('mouseup', endSpeedPress);
+          zone.addEventListener('mouseleave', endSpeedPress);
+          zone.addEventListener('touchstart', function (e) {
+            if (e.touches.length) startSpeedPress(e.touches[0].clientX, e.touches[0].clientY);
+          }, { passive: true });
+          zone.addEventListener('touchmove', function (e) {
+            if (e.touches.length) maybeCancelOnMove(e.touches[0].clientX, e.touches[0].clientY);
+          }, { passive: true });
+          zone.addEventListener('touchend', endSpeedPress);
+          zone.addEventListener('touchcancel', endSpeedPress);
+        });
+
+        /* Double-tap seek */
         function makeDoubleTap(zone, overlay, direction) {
           let lastTap = 0, tapCount = 0, singleTapTimer = null, resetTimer = null;
           const DOUBLE_MS = 280, RESET_MS = 1000;
           zone.addEventListener('click', function (e) {
             e.stopPropagation();
+            if (longPressFired) { longPressFired = false; return; }
             const now = Date.now();
             if (now - lastTap < DOUBLE_MS) {
               clearTimeout(singleTapTimer);
@@ -1466,6 +1787,7 @@
         makeDoubleTap(document.getElementById('tapRight'), document.getElementById('seekFlashRight'), 1);
         document.getElementById('tapCenter').addEventListener('click', function (e) {
           e.stopPropagation();
+          if (longPressFired) { longPressFired = false; return; }
           onSurfaceTap();
         });
 
@@ -1476,7 +1798,6 @@
         video.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); });
         ytPlayer.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
-        /* Compatibility shim for remaining code that expected Plyr `player` */
         player = {
           get volume() { return video.volume; },
           set volume(v) { video.volume = v; },
