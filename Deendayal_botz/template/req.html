@@ -240,10 +240,57 @@
     /* AirPlay button hidden by default — only revealed by JS when Safari confirms an AirPlay device is nearby */
     #airplayBtn { display: none; }
     #airplayBtn.cast-available { display: flex; }
+    .yt-lock-btn {
+      position: absolute; top: 10px; left: 10px; z-index: 30;
+      width: 34px; height: 34px; border-radius: 50%; border: none;
+      background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center;
+      color: #fff; opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+    }
+    .yt-player.show-ui .yt-lock-btn,
+    .yt-player.screen-locked .yt-lock-btn { opacity: 1; pointer-events: auto; }
+    .yt-lock-btn svg { width: 16px; height: 16px; fill: #fff; }
+    .yt-lock-btn .icon-lock-open { display: block; }
+    .yt-lock-btn .icon-lock-closed { display: none; }
+    .yt-lock-btn.locked .icon-lock-open { display: none; }
+    .yt-lock-btn.locked .icon-lock-closed { display: block; }
+
+    .yt-player.screen-locked .yt-controls,
+    .yt-player.screen-locked .yt-big-play,
+    .yt-player.screen-locked .yt-tap-zone,
+    .yt-player.screen-locked .yt-speed-indicator,
+    .yt-player.screen-locked .yt-seek-overlay {
+      opacity: 0 !important; visibility: hidden !important; pointer-events: none !important;
+    }
+
     .yt-vol-wrap { display: flex; align-items: center; }
     .yt-vol-slider { width: 0; overflow: hidden; transition: width 0.2s ease; }
-    .yt-vol-wrap.active .yt-vol-slider { width: 60px; }
-    .yt-vol-slider input[type=range] { width: 56px; accent-color: var(--ember); height: 3px; }
+    .yt-vol-wrap.active .yt-vol-slider { width: 64px; }
+    .yt-vol-slider input[type=range] {
+      -webkit-appearance: none; appearance: none;
+      width: 60px; height: 5px; border-radius: 99px;
+      background: rgba(255,255,255,0.12);
+      outline: none; cursor: pointer;
+    }
+    .yt-vol-slider input[type=range]::-webkit-slider-runnable-track {
+      height: 5px; border-radius: 99px; background: transparent;
+    }
+    .yt-vol-slider input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
+      background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 0 6px rgba(227,61,61,0.55);
+      cursor: pointer; margin-top: -3.5px;
+    }
+    .yt-vol-slider input[type=range]::-moz-range-track {
+      height: 5px; border-radius: 99px; background: rgba(255,255,255,0.12);
+    }
+    .yt-vol-slider input[type=range]::-moz-range-progress {
+      height: 5px; border-radius: 99px; background: var(--ember);
+      box-shadow: 0 0 6px rgba(227,61,61,0.55);
+    }
+    .yt-vol-slider input[type=range]::-moz-range-thumb {
+      width: 12px; height: 12px; border-radius: 50%; border: none;
+      background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 0 6px rgba(227,61,61,0.55);
+      cursor: pointer;
+    }
     .yt-vol-boost-label {
       font-size: 10px; color: var(--ember); font-weight: 700; white-space: nowrap;
       opacity: 0; max-width: 0; overflow: hidden; transition: opacity 0.15s ease, max-width 0.15s ease;
@@ -386,6 +433,11 @@
       <div class="yt-player paused show-ui" id="ytPlayer">
         <video id="player" playsinline webkit-playsinline preload="metadata"
           src="{{file_url}}"></video>
+
+        <button class="yt-lock-btn" id="lockBtn" aria-label="Lock controls" type="button">
+          <svg class="icon-lock-open" viewBox="0 0 24 24"><path d="M18 8h-1V6a5 5 0 0 0-9.9-1h2.1a3 3 0 0 1 5.8 1v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zm0 12H6V10h12v10zm-6-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
+          <svg class="icon-lock-closed" viewBox="0 0 24 24"><path d="M12 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm6-9h-1V6a5 5 0 0 0-10 0v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2zm-7-2a3 3 0 0 1 6 0v2H9V6zm9 14H6V10h12v10z"/></svg>
+        </button>
 
         <div class="yt-seek-overlay left" id="seekFlashLeft">
           <div class="yt-seek-arrows">
@@ -1595,9 +1647,6 @@
           e.stopPropagation();
           initAudioContext(video);
           volWrap.classList.toggle('active');
-          video.muted = !video.muted;
-          updateVolIcon();
-          syncVolume();
           showUI(true);
         });
         volSlider.addEventListener('input', function () {
@@ -1611,8 +1660,19 @@
           const pct = Math.round(val * 100);
           volBoostLabel.textContent = pct + '%';
           volBoostLabel.classList.toggle('show', val > 1);
+          const fillPct = (val / 3) * 100;
+          volSlider.style.background = 'linear-gradient(to right, var(--ember) ' + fillPct + '%, rgba(255,255,255,0.12) ' + fillPct + '%)';
+        });
+        document.addEventListener('click', function (e) {
+          if (volWrap.classList.contains('active') && !volWrap.contains(e.target)) {
+            volWrap.classList.remove('active');
+          }
         });
         volWrap.addEventListener('click', function (e) { e.stopPropagation(); });
+        {
+          const initFillPct = (parseFloat(volSlider.value) / 3) * 100;
+          volSlider.style.background = 'linear-gradient(to right, var(--ember) ' + initFillPct + '%, rgba(255,255,255,0.12) ' + initFillPct + '%)';
+        }
 
         /* Settings / speed */
         settingsBtn.addEventListener('click', function (e) {
@@ -1797,6 +1857,26 @@
         video.style.touchAction = 'manipulation';
         video.addEventListener('dblclick', function (e) { e.preventDefault(); e.stopPropagation(); });
         ytPlayer.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+        /* ========== Screen lock (hides all controls except this icon) ========== */
+        const lockBtn = document.getElementById('lockBtn');
+        const iconLockOpen = lockBtn.querySelector('.icon-lock-open');
+        const iconLockClosed = lockBtn.querySelector('.icon-lock-closed');
+        let isLocked = false;
+        function setLocked(state) {
+          isLocked = state;
+          ytPlayer.classList.toggle('screen-locked', state);
+          lockBtn.classList.toggle('locked', state);
+          if (state) {
+            clearTimeout(hideTimer);
+          } else {
+            showUI(true);
+          }
+        }
+        lockBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          setLocked(!isLocked);
+        });
 
         player = {
           get volume() { return video.volume; },
