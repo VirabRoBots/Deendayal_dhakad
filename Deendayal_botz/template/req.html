@@ -286,6 +286,19 @@
       transform: translate(-50%, -4.5px); pointer-events: none;
     }
 
+    .custom-subs-overlay {
+      position: absolute; left: 0; right: 0; bottom: 70px;
+      display: flex; justify-content: center;
+      pointer-events: none; z-index: 8; padding: 0 24px;
+    }
+    .custom-subs-overlay span {
+      display: none; background: rgba(0,0,0,0.75); color: #fff;
+      font-size: 1rem; font-weight: 600; line-height: 1.4; text-align: center;
+      padding: 6px 14px; border-radius: 6px; white-space: pre-line;
+      text-shadow: 0 1px 3px rgba(0,0,0,.6); max-width: 90%;
+    }
+    .custom-subs-overlay.active span { display: inline-block; }
+
     #mediaLoadingUI {
       position: absolute; inset: 0; z-index: 9999; background: rgba(10,6,5,.9);
       display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px; pointer-events: all;
@@ -519,7 +532,8 @@
           </div>
         </div>
 
-        
+        <div class="custom-subs-overlay" id="customSubsOverlay"><span id="customSubsText"></span></div>
+
         <div class="yt-controls" id="ytControls">
           <div class="yt-progress-row">
             <div class="yt-seek" id="ytSeek">
@@ -662,9 +676,13 @@
           </div>
 
           <div class="sub-cust-panel sub-cust-panel-pos" data-panel="pos">
-            <p style="font-size:.8rem;color:var(--muted);line-height:1.5;text-align:center;margin:0;">
-              Position isn't adjustable — these subtitles are rendered by the browser itself from the file's built-in track, so placement is controlled by the browser, not by this page.
-            </p>
+            <div class="sub-pos-grid">
+              <span></span><button class="sub-pos-arrow" data-dir="up" type="button"><i class="fa-solid fa-chevron-up"></i></button><span></span>
+              <button class="sub-pos-arrow" data-dir="left" type="button"><i class="fa-solid fa-chevron-left"></i></button>
+              <button class="sub-pos-reset" id="subPosReset" type="button"><i class="fa-solid fa-rotate-left"></i></button>
+              <button class="sub-pos-arrow" data-dir="right" type="button"><i class="fa-solid fa-chevron-right"></i></button>
+              <span></span><button class="sub-pos-arrow" data-dir="down" type="button"><i class="fa-solid fa-chevron-down"></i></button><span></span>
+            </div>
           </div>
         </div>
       </div>
@@ -742,20 +760,246 @@
 
   <script>
     const STREAM_URL = "{{file_url}}";
+    const AUDIO_WINDOW_SECONDS = 600;
+    const SUBTITLE_WINDOW_SECONDS = 600;
+    const ROLLOVER_LEAD = 45;
+    const REFETCH_DRIFT = 1.5;
+    const SEAM_LEAD = 0.25;
+
     let player = null;
+    let activeAudio = null;
+    let activeTrackIdx = null;
+    let audioAnchor = 0;
+    let nextAudio = null;
+    let nextAnchor = 0;
+    let nextReady = false;
+    let isPreparingAudio = false;
+    let playAfterPrepare = false;
     let buffering = false;
     let audioCtx = null;
     let vidGainNode = null;
     let useFallbackMute = false;
-    let volumeBoost = 1; // volume-boost-above-100% feature — unrelated to
-                          // audio-track switching, kept as-is
-    let audioMode = 'pending'; // 'pending' | 'list' | 'none'
-    let subMode = 'pending';   // 'pending' | 'list' | 'none'
+    let volumeBoost = 1;
+    let audioRequestId = 0;
+    let seekDebounceTimer = null;
+    let audioMode = 'pending';
+    let nativeAudioTracks = false; // true when the browser can switch audio tracks
+                                    // already muxed into the video file itself,
+                                    // with zero extra network requests (Chrome/Edge
+                                    // support this; Safari/Firefox generally don't —
+                                    // falls back to the /audio/ fetch approach below).
+    let subMode = 'pending';
+    let nativeSubtitleTracks = false;
+    let activeNativeSubIdx = null;
+
+    // ========== Subtitle state ==========
+    let subCues = [];
+    let subCuePointer = 0;
+    let activeSubIndex = null;
+    let subsEnabled = false;
+    let subLoadToken = 0;
+    let isPreparingSubtitle = false;
+    let playAfterSubPrepare = false;
+    let subWindowStart = 0;
+    let subWindowEnd = 0;
 
     // ========== Cast state ==========
     let castContext = null;
     let castSession = null;
     let isCasting = false;
+
+    // Lightweight in-page cache (sessionStorage) for subtitle text and
+    // track-list JSON. Not as strong as a Service Worker — it only covers
+    // requests this page makes itself via fetch(), and only for the current
+    // tab/session — but it needs no separate file and still avoids
+    // re-downloading the same subtitle window or track list twice.
+    function cachedFetchText(url) {
+      let cached = null;
+      try { cached = sessionStorage.getItem('mcache:' + url); } catch (e) {}
+      if (cached !== null) return Promise.resolve(cached);
+      return fetch(url).then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.text();
+      }).then(function (text) {
+        try { sessionStorage.setItem('mcache:' + url, text); } catch (e) {}
+        return text;
+      });
+    }
+
+    function buildAudioUrl(streamIndex, atTime) {
+      const u = new URL(STREAM_URL, window.location.origin);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/audio/' + streamIndex + '/' + pathParts.join('/');
+      u.searchParams.set('t', Math.max(0, atTime || 0).toFixed(3));
+      return u.toString();
+    }
+    function buildTracksUrl() {
+      const u = new URL(STREAM_URL, window.location.origin);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/api/tracks/' + pathParts.join('/');
+      return u.toString();
+    }
+    function buildSubtitleTracksUrl() {
+      const u = new URL(STREAM_URL, window.location.origin);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/api/subtitles/' + pathParts.join('/');
+      return u.toString();
+    }
+    function buildSubtitleUrl(streamIndex, atTime) {
+      const u = new URL(STREAM_URL, window.location.origin);
+      const pathParts = u.pathname.split('/').filter(Boolean);
+      u.pathname = '/sub/' + streamIndex + '/' + pathParts.join('/');
+      u.searchParams.set('t', Math.max(0, atTime || 0).toFixed(3));
+      return u.toString();
+    }
+
+    function parseSubtitleCues(text) {
+      const cues = [];
+      text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      const blocks = text.split(/\n\s*\n/);
+      const timeRe = /(?:(\d{2}):)?(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(?:(\d{2}):)?(\d{2}):(\d{2})[.,](\d{3})/;
+
+      function toSec(h, m, s, ms) {
+        return (+(h || 0)) * 3600 + (+m) * 60 + (+s) + (+ms) / 1000;
+      }
+
+      for (const block of blocks) {
+        const lines = block.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+        if (lines.length === 0) continue;
+
+        let timeLineIdx = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (timeRe.test(lines[i])) { timeLineIdx = i; break; }
+        }
+        if (timeLineIdx === -1) continue;
+
+        const m = lines[timeLineIdx].match(timeRe);
+        const start = toSec(m[1], m[2], m[3], m[4]);
+        const end = toSec(m[5], m[6], m[7], m[8]);
+        const textLines = lines.slice(timeLineIdx + 1);
+        if (textLines.length === 0) continue;
+
+        cues.push({ start: start, end: end, text: textLines.join('\n') });
+      }
+
+      cues.sort(function (a, b) { return a.start - b.start; });
+      return cues;
+    }
+
+    function loadSubtitleWindow(streamIndex, atTime) {
+      const myToken = ++subLoadToken;
+      activeSubIndex = streamIndex;
+      subCues = [];
+      subCuePointer = 0;
+      hideSubtitleOverlay();
+
+      const vid = getVideo();
+      const requestedStart = Math.max(0, atTime || (vid ? vid.currentTime : 0));
+      subWindowStart = requestedStart;
+      subWindowEnd = requestedStart + SUBTITLE_WINDOW_SECONDS;
+
+      const wasPlaying = vid && !vid.paused;
+
+      if (vid && wasPlaying) {
+        playAfterSubPrepare = true;
+        vid.pause();
+      }
+      if (activeAudio && !activeAudio.paused) {
+        activeAudio.pause();
+      }
+
+      setPreparingSubtitle(true);
+
+      const url = buildSubtitleUrl(streamIndex, requestedStart);
+
+      cachedFetchText(url)
+        .then(function (text) {
+          if (myToken !== subLoadToken) return;
+
+          const rawCues = parseSubtitleCues(text);
+
+          subCues = rawCues.map(function (c) {
+            return {
+              start: c.start + requestedStart,
+              end:   c.end   + requestedStart,
+              text:  c.text
+            };
+          });
+
+          subCuePointer = 0;
+          subsEnabled = true;
+          document.getElementById('subsToggle').checked = true;
+
+          document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
+            el.classList.toggle('active', String(el.dataset.index) === String(streamIndex));
+          });
+
+          setPreparingSubtitle(false);
+
+          if (playAfterSubPrepare) {
+            playAfterSubPrepare = false;
+            if (vid) vid.play().catch(function () {});
+            if (activeAudio) activeAudio.play().catch(function () {});
+          }
+        })
+        .catch(function (err) {
+          if (myToken !== subLoadToken) return;
+          console.error('Subtitle load error:', err);
+          setPreparingSubtitle(false);
+          subsEnabled = false;
+          activeSubIndex = null;
+          document.getElementById('subsToggle').checked = false;
+          alert('Failed to load subtitle: ' + (err.message || 'unknown error'));
+        });
+    }
+
+    function hideSubtitleOverlay() {
+      const overlay = document.getElementById('customSubsOverlay');
+      const textEl = document.getElementById('customSubsText');
+      overlay.classList.remove('active');
+      textEl.textContent = '';
+    }
+
+    function paintCue() {
+      const vid = getVideo();
+      if (!subsEnabled || !vid || subCues.length === 0) {
+        requestAnimationFrame(paintCue);
+        return;
+      }
+      const t = vid.currentTime;
+
+      if (t > subWindowEnd - 30 && activeSubIndex !== null && !isPreparingSubtitle) {
+        loadSubtitleWindow(activeSubIndex, Math.max(0, t - 5));
+        requestAnimationFrame(paintCue);
+        return;
+      }
+
+      if (subCuePointer >= subCues.length || t < subCues[Math.max(0, subCuePointer - 1)].start - 2 ||
+          (subCuePointer < subCues.length && t > subCues[subCuePointer].end + 30)) {
+        let lo = 0, hi = subCues.length - 1, ans = 0;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (subCues[mid].start <= t) { ans = mid; lo = mid + 1; } else { hi = mid - 1; }
+        }
+        subCuePointer = ans;
+      }
+
+      while (subCuePointer < subCues.length - 1 && subCues[subCuePointer].end < t) {
+        subCuePointer++;
+      }
+
+      const cue = subCues[subCuePointer];
+      const overlay = document.getElementById('customSubsOverlay');
+      const textEl = document.getElementById('customSubsText');
+      if (cue && t >= cue.start && t <= cue.end) {
+        if (textEl.textContent !== cue.text) textEl.textContent = cue.text;
+        overlay.classList.add('active');
+      } else {
+        overlay.classList.remove('active');
+      }
+
+      requestAnimationFrame(paintCue);
+    }
 
     const LANG_MAP = {
       eng:'English', en:'English', hin:'Hindi', hi:'Hindi',
@@ -769,14 +1013,23 @@
       kor:'Korean', ko:'Korean', chi:'Chinese', zh:'Chinese',
       und:'Unknown', '': 'Unknown'
     };
-    function nativeTrackLabel(track, fallbackIndex) {
-      if (track.label) return track.label;
-      const lang = (track.language || '').toLowerCase();
-      if (lang && LANG_MAP[lang]) return LANG_MAP[lang];
-      if (lang) return lang;
-      return 'Track ' + (fallbackIndex + 1);
-    }
+    function trackLabel(track) {
+      const meta = track.tags || {};
+      const lang = (meta.language || '').toLowerCase();
+      const langName = LANG_MAP[lang] || '';
+      const title = (meta.title || '').trim();
 
+      if (langName && title) {
+        return `${langName} - ${title}`;
+      }
+      if (langName) {
+        return langName;
+      }
+      if (title) {
+        return title;
+      }
+      return lang || 'Unknown';
+    }
     function getVideo() { return document.querySelector('#player'); }
     function getYtPlayer() { return document.getElementById('ytPlayer'); }
 
@@ -789,11 +1042,29 @@
       else { if (el) el.classList.remove('show'); if (yt) yt.classList.remove('controls-locked'); }
     }
     function updateLoadingUI() {
-      showLoadingUI(buffering, 'Loading…');
+      if (isPreparingAudio || isPreparingSubtitle) {
+        showLoadingUI(true, isPreparingSubtitle ? 'Preparing subtitles…' : 'Preparing audio…');
+        return;
+      }
+      if (buffering) {
+        showLoadingUI(true, 'Loading…');
+        return;
+      }
+      showLoadingUI(false);
+    }
+    function setPreparing(on) {
+      isPreparingAudio = on;
+      const yt = getYtPlayer();
+      if (yt) yt.classList.toggle('seek-blocked', on || isPreparingSubtitle);
+      updateLoadingUI();
+    }
+    function setPreparingSubtitle(on) {
+      isPreparingSubtitle = on;
+      const yt = getYtPlayer();
+      if (yt) yt.classList.toggle('seek-blocked', on || isPreparingAudio);
+      updateLoadingUI();
     }
 
-    // ========== Volume boost (above 100%) — uses the video's own audio,
-    // no separate stream, so this is unaffected by removing track-fetching ==========
     function initAudioContext(vid) {
       if (!vid) return;
       const AC = window.AudioContext || window.webkitAudioContext;
@@ -808,14 +1079,144 @@
           vidGainNode.connect(audioCtx.destination);
           vid.__audioConnected = true;
         }
-        if (vidGainNode) vidGainNode.gain.value = volumeBoost;
+        if (vidGainNode) vidGainNode.gain.value = (activeTrackIdx !== null) ? 0 : volumeBoost;
       } catch (e) { useFallbackMute = true; }
     }
+    function silenceVideo(vid) { initAudioContext(vid); if (useFallbackMute) { if (vid) vid.muted = true; return; } if (vidGainNode) vidGainNode.gain.value = 0; }
+    function restoreVideoAudio(vid) { if (useFallbackMute) { if (vid) vid.muted = false; return; } if (vidGainNode) vidGainNode.gain.value = volumeBoost; }
+    function killAudioEl(el) { if (!el) return; try { el.pause(); el.removeAttribute('src'); el.load(); el.remove(); } catch (e) {} }
+    function destroyAudio() { killAudioEl(activeAudio); activeAudio = null; }
+    function activate(el, anchor) {
+      activeAudio = el; audioAnchor = anchor;
+      el.addEventListener('ended', function () {
+        if (el !== activeAudio || activeTrackIdx === null || isPreparingAudio) return;
+        if (nextReady) promoteNext(); else requestAudio(activeTrackIdx, getVideo().currentTime);
+      }, { once: true });
+    }
+    function dropNext() { killAudioEl(nextAudio); nextAudio = null; nextAnchor = 0; nextReady = false; }
+    function syncVolume() {
+      const vid = getVideo();
+      if (!vid) return;
+      if (activeAudio) { activeAudio.volume = vid.volume; activeAudio.muted = vid.muted; }
+      if (nextAudio) { nextAudio.volume = vid.volume; nextAudio.muted = vid.muted; }
+    }
+    function connectAudioBoost(el) {
+      if (useFallbackMute) return null;
+      try {
+        if (!audioCtx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) { useFallbackMute = true; return null; }
+          audioCtx = new AC();
+        }
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const src = audioCtx.createMediaElementSource(el);
+        const gain = audioCtx.createGain();
+        gain.gain.value = volumeBoost;
+        src.connect(gain);
+        gain.connect(audioCtx.destination);
+        el.__boostGain = gain;
+        return gain;
+      } catch (e) { return null; }
+    }
     function applyBoostToAll() {
-      if (vidGainNode) vidGainNode.gain.value = volumeBoost;
+      if (vidGainNode) vidGainNode.gain.value = (activeTrackIdx !== null) ? 0 : volumeBoost;
+      if (activeAudio && activeAudio.__boostGain) activeAudio.__boostGain.gain.value = volumeBoost;
+      if (nextAudio && nextAudio.__boostGain) nextAudio.__boostGain.gain.value = volumeBoost;
+    }
+    function newAudioEl() {
+      const el = document.createElement('audio');
+      el.preload = 'auto'; el.style.display = 'none';
+      if ('preservesPitch' in el) el.preservesPitch = true;
+      if ('webkitPreservesPitch' in el) el.webkitPreservesPitch = true;
+      document.body.appendChild(el);
+      connectAudioBoost(el);
+      return el;
+    }
+    function windowEnd() { return audioAnchor + AUDIO_WINDOW_SECONDS; }
+
+    function requestAudio(streamIndex, atTime) {
+      const vid = getVideo();
+      if (!vid) return;
+      if (seekDebounceTimer) { clearTimeout(seekDebounceTimer); seekDebounceTimer = null; }
+      const anchor = Math.max(0, (atTime != null) ? atTime : (vid.currentTime || 0));
+      const myId = ++audioRequestId;
+      const wasPlaying = !vid.paused;
+      initAudioContext(vid);
+      if (wasPlaying) vid.pause();
+      dropNext(); destroyAudio();
+      activeTrackIdx = streamIndex; audioAnchor = anchor; playAfterPrepare = false;
+      silenceVideo(vid); setPreparing(true); markActiveLang(streamIndex);
+
+      const el = newAudioEl();
+      el.addEventListener('error', function () {
+        if (myId !== audioRequestId) return;
+        setPreparing(false); switchToDefault();
+        alert('Selected audio track failed. Switched back to default.');
+      });
+      el.addEventListener('canplay', function onCanPlay() {
+        el.removeEventListener('canplay', onCanPlay);
+        if (myId !== audioRequestId) { killAudioEl(el); return; }
+        activate(el, anchor); syncVolume(); el.playbackRate = vid.playbackRate; setPreparing(false);
+        if (wasPlaying || playAfterPrepare) { playAfterPrepare = false; startBoth(); }
+      }, { once: true });
+      el.src = buildAudioUrl(streamIndex, anchor);
+      el.load();
     }
 
-    // ========== Native audio-track switching (zero extra bandwidth where supported) ==========
+    function prefetchNext() {
+      if (nextAudio || activeTrackIdx === null || !activeAudio) return;
+      const anchor = windowEnd();
+      const myId = audioRequestId;
+      const el = newAudioEl();
+      nextAudio = el; nextAnchor = anchor; nextReady = false;
+      el.addEventListener('canplay', function () { if (myId !== audioRequestId || el !== nextAudio) { killAudioEl(el); return; } nextReady = true; }, { once: true });
+      el.addEventListener('error', function () { if (el === nextAudio) dropNext(); });
+      el.src = buildAudioUrl(activeTrackIdx, anchor);
+      el.load();
+    }
+    function promoteNext() {
+      const vid = getVideo();
+      const el = nextAudio, anchor = nextAnchor;
+      nextAudio = null; nextAnchor = 0; nextReady = false;
+      if (!el || !vid) { killAudioEl(el); return; }
+      const _v = getVideo();
+      if (_v) { el.volume = _v.volume; el.muted = _v.muted; }
+      el.playbackRate = vid.playbackRate;
+      const old = activeAudio;
+      const myId = audioRequestId;
+      const t0 = performance.now();
+      function handOver() { if (myId !== audioRequestId) { killAudioEl(el); return; } activate(el, anchor); killAudioEl(old); }
+      if (vid.paused) { handOver(); return; }
+      el.play().catch(function () {});
+      (function waitForSound() {
+        if (myId !== audioRequestId) { killAudioEl(el); return; }
+        const waited = (performance.now() - t0) / 1000;
+        if (el.currentTime > 0 || waited > 1.5) { handOver(); return; }
+        setTimeout(waitForSound, 20);
+      })();
+    }
+    function startBoth() {
+      const vid = getVideo();
+      if (!activeAudio || !vid) return;
+      activeAudio.addEventListener('playing', function () { vid.play().catch(function () {}); }, { once: true });
+      activeAudio.play().catch(function () { vid.play().catch(function () {}); });
+    }
+    function switchToDefault() {
+      const vid = getVideo();
+      const wasPlaying = vid && !vid.paused;
+      if (seekDebounceTimer) { clearTimeout(seekDebounceTimer); seekDebounceTimer = null; }
+      audioRequestId++; setPreparing(false); playAfterPrepare = false;
+      dropNext(); destroyAudio();
+      activeTrackIdx = null; audioAnchor = 0;
+      restoreVideoAudio(vid); markActiveLang(null);
+      if (vid && wasPlaying) vid.play().catch(function () {});
+    }
+    function markActiveLang(streamIndex) {
+      document.querySelectorAll('#audioPanel .lang-item').forEach(function (el) {
+        el.classList.toggle('active', String(el.dataset.index) === String(streamIndex == null ? 'default' : streamIndex));
+      });
+    }
+
     function switchNativeAudioTrack(index) {
       const vid = getVideo();
       if (!vid || !vid.audioTracks) return;
@@ -823,68 +1224,118 @@
         vid.audioTracks[i].enabled = (i === index);
       }
     }
-    function renderAudioList() {
+
+    function renderAudioList(tracks) {
       const btn = document.getElementById('btnAudio');
       const panel = document.getElementById('audioPanel');
-      const vid = getVideo();
       btn.classList.add('show');
-      const tracks = vid && vid.audioTracks;
+
+      const vid = getVideo();
+      if (vid && vid.audioTracks && vid.audioTracks.length > 1) {
+        // Free path: browser exposes the muxed-in tracks directly, so
+        // switching costs zero extra bandwidth — nothing new to fetch.
+        nativeAudioTracks = true;
+        audioMode = 'list';
+        panel.innerHTML = '';
+        for (let i = 0; i < vid.audioTracks.length; i++) {
+          const t = vid.audioTracks[i];
+          const item = document.createElement('div');
+          item.className = 'lang-item' + (vid.audioTracks[i].enabled ? ' active' : '');
+          item.dataset.index = i;
+          item.textContent = t.label || t.language || ('Track ' + (i + 1));
+          item.onclick = function () {
+            switchNativeAudioTrack(i);
+            document.querySelectorAll('#audioPanel .lang-item').forEach(function (el) {
+              el.classList.toggle('active', el.dataset.index === String(i));
+            });
+          };
+          panel.appendChild(item);
+        }
+        return;
+      }
+
+      // Fallback path: browser can't expose/switch muxed tracks natively,
+      // so use the separate /audio/ fetch (costs bandwidth per switch).
       if (!tracks || tracks.length < 2) { audioMode = 'none'; panel.innerHTML = ''; return; }
       audioMode = 'list';
       panel.innerHTML = '';
-      for (let i = 0; i < tracks.length; i++) {
-        const t = tracks[i];
+      tracks.forEach(function (track, idx) {
         const item = document.createElement('div');
-        item.className = 'lang-item' + (t.enabled ? ' active' : '');
-        item.dataset.index = i;
-        item.textContent = nativeTrackLabel(t, i);
+        item.className = 'lang-item' + (idx === 0 ? ' active' : '');
+        item.dataset.index = idx === 0 ? 'default' : track.index;
+        item.textContent = trackLabel(track);
         item.onclick = function () {
-          switchNativeAudioTrack(i);
-          document.querySelectorAll('#audioPanel .lang-item').forEach(function (el) {
-            el.classList.toggle('active', el.dataset.index === String(i));
-          });
+          if (idx === 0) { if (activeTrackIdx !== null) switchToDefault(); return; }
+          if (activeTrackIdx === track.index) return;
+          requestAudio(track.index);
         };
         panel.appendChild(item);
-      }
+      });
     }
 
-    // ========== Native subtitle-track switching (browser renders the cues
-    // itself — zero extra bandwidth, but position can't be customized;
-    // color/background/size are applied via the ::cue CSS below) ==========
-    function subtitleTracksList(vid) {
-      if (!vid || !vid.textTracks) return [];
-      const out = [];
+    function switchNativeSubtitleTrack(index) {
+      const vid = getVideo();
+      if (!vid || !vid.textTracks) return;
       for (let i = 0; i < vid.textTracks.length; i++) {
-        const kind = vid.textTracks[i].kind;
-        if (kind === 'subtitles' || kind === 'captions') out.push(vid.textTracks[i]);
+        vid.textTracks[i].mode = (i === index) ? 'showing' : 'disabled';
       }
-      return out;
+      activeNativeSubIdx = index;
+      activeSubIndex = null;
+      subsEnabled = true;
+      document.getElementById('subsToggle').checked = true;
+      hideSubtitleOverlay();
     }
-    function renderSubtitleList() {
+
+    function renderNativeSubtitleList() {
+      const vid = getVideo();
       const btn = document.getElementById('btnSubs');
       const list = document.getElementById('subsLangList');
-      const vid = getVideo();
+      if (!vid || !vid.textTracks || vid.textTracks.length === 0) return false;
+
+      nativeSubtitleTracks = true;
+      subMode = 'list';
       btn.classList.add('show');
-      const tracks = subtitleTracksList(vid);
-      if (tracks.length === 0) {
+      list.innerHTML = '';
+
+      for (let i = 0; i < vid.textTracks.length; i++) {
+        const track = vid.textTracks[i];
+        const item = document.createElement('div');
+        item.className = 'lang-item';
+        item.dataset.index = i;
+        item.textContent = track.label || track.language || ('Track ' + (i + 1));
+        item.onclick = function () {
+          switchNativeSubtitleTrack(i);
+          document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
+            el.classList.toggle('active', String(el.dataset.index) === String(i));
+          });
+        };
+        list.appendChild(item);
+      }
+      return true;
+    }
+
+    function renderSubtitleList(tracks) {
+      if (nativeSubtitleTracks) return;
+      const btn = document.getElementById('btnSubs');
+      const list = document.getElementById('subsLangList');
+      btn.classList.add('show');
+
+      if (!tracks || tracks.length === 0) {
         subMode = 'none';
         list.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:8px 0;">No subtitles found in this file.</div>';
         return;
       }
+
       subMode = 'list';
       list.innerHTML = '';
-      tracks.forEach(function (t) { t.mode = 'disabled'; });
-      tracks.forEach(function (track, i) {
+
+      tracks.forEach(function (track) {
         const item = document.createElement('div');
         item.className = 'lang-item';
-        item.dataset.index = i;
-        item.textContent = nativeTrackLabel(track, i);
+        item.dataset.index = track.index;
+        item.textContent = trackLabel(track);
         item.onclick = function () {
-          tracks.forEach(function (t, j) { t.mode = (j === i) ? 'showing' : 'disabled'; });
-          document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
-            el.classList.toggle('active', Number(el.dataset.index) === i);
-          });
-          document.getElementById('subsToggle').checked = true;
+          loadSubtitleWindow(track.index, getVideo() ? getVideo().currentTime : 0);
         };
         list.appendChild(item);
       });
@@ -918,36 +1369,22 @@
     });
 
     document.getElementById('subsToggle').addEventListener('change', function () {
-      const vid = getVideo();
-      const tracks = subtitleTracksList(vid);
-      if (tracks.length === 0) return;
-      if (this.checked) {
-        const activeItem = document.querySelector('#subsLangList .lang-item.active');
-        const idx = activeItem ? Number(activeItem.dataset.index) : 0;
-        tracks.forEach(function (t, j) { t.mode = (j === idx) ? 'showing' : 'disabled'; });
-        document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
-          el.classList.toggle('active', Number(el.dataset.index) === idx);
-        });
-      } else {
-        tracks.forEach(function (t) { t.mode = 'disabled'; });
+      subsEnabled = this.checked;
+      if (nativeSubtitleTracks) {
+        const vid = getVideo();
+        if (vid && vid.textTracks) {
+          for (let i = 0; i < vid.textTracks.length; i++) {
+            vid.textTracks[i].mode = (this.checked && i === activeNativeSubIdx) ? 'showing' : 'disabled';
+          }
+        }
+      } else if (!subsEnabled) {
+        hideSubtitleOverlay();
       }
     });
 
     (function initSubsCustomize() {
-      let cueStyleEl = document.getElementById('subsCueStyle');
-      if (!cueStyleEl) {
-        cueStyleEl = document.createElement('style');
-        cueStyleEl.id = 'subsCueStyle';
-        document.head.appendChild(cueStyleEl);
-      }
-      let textColor = '#ffffff';
-      let bgColor = 'rgba(0,0,0,0.75)';
-      let fontSizePx = 18;
-      function updateCueCSS() {
-        cueStyleEl.textContent = '#player::cue { color: ' + textColor + '; background-color: ' + bgColor + '; font-size: ' + fontSizePx + 'px; }';
-      }
-      updateCueCSS();
-
+      const customSubsText = document.getElementById('customSubsText');
+      const customSubsOverlay = document.getElementById('customSubsOverlay');
       const toggleBtn = document.getElementById('subsCustomizeToggle');
       const panel = document.getElementById('subsCustomizePanel');
       const tabs = document.querySelectorAll('.sub-cust-tab');
@@ -964,9 +1401,13 @@
       const hexInput = document.getElementById('subHexInput');
       const hexError = document.getElementById('subHexError');
       const sizeSlider = document.getElementById('subSizeSlider');
+      const posArrows = document.querySelectorAll('.sub-pos-arrow');
+      const posReset = document.getElementById('subPosReset');
 
       let colorTarget = 'text';
       let hue = 0, sat = 0, val = 100;
+      let posOffsetX = 0, posOffsetY = 0;
+      const POS_STEP = 4;
 
       toggleBtn.addEventListener('click', function () {
         const isOpen = panel.classList.toggle('open');
@@ -1015,15 +1456,12 @@
         svCursor.style.left = sat + '%';
         svCursor.style.top = (100 - val) + '%';
       }
-      function setTarget(hex) {
-        if (colorTarget === 'text') textColor = hex; else bgColor = hex;
-        updateCueCSS();
-      }
       function applyColor(fromTyping) {
         const hex = hsvToHex(hue, sat, val);
         hexPreview.style.background = hex;
         if (!fromTyping) hexInput.value = hex.toUpperCase();
-        setTarget(hex);
+        if (colorTarget === 'text') customSubsText.style.color = hex;
+        else customSubsText.style.background = hex;
         swatches.forEach(function (s) { s.classList.remove('active'); });
       }
 
@@ -1081,7 +1519,8 @@
           swatches.forEach(function (b) { b.classList.remove('active'); });
           btn.classList.add('active');
           const hex = btn.dataset.color;
-          setTarget(hex);
+          if (colorTarget === 'text') customSubsText.style.color = hex;
+          else customSubsText.style.background = hex;
           const hsv = hexToHsv(hex);
           hue = hsv.h; sat = hsv.s; val = hsv.v;
           updateSquareBg(); updateCursors();
@@ -1099,8 +1538,41 @@
       });
 
       sizeSlider.addEventListener('input', function () {
-        fontSizePx = Number(sizeSlider.value);
-        updateCueCSS();
+        customSubsText.style.fontSize = sizeSlider.value + 'px';
+      });
+
+      function applyPosOffset() {
+        customSubsOverlay.style.transform = 'translate(' + posOffsetX + 'px, ' + posOffsetY + 'px)';
+      }
+      let posHoldTimer = null, posHoldInterval = null;
+      function nudgePos(dir) {
+        if (dir === 'up') posOffsetY -= POS_STEP;
+        if (dir === 'down') posOffsetY += POS_STEP;
+        if (dir === 'left') posOffsetX -= POS_STEP;
+        if (dir === 'right') posOffsetX += POS_STEP;
+        applyPosOffset();
+      }
+      posArrows.forEach(function (btn) {
+        const dir = btn.dataset.dir;
+        function start(e) {
+          e.preventDefault();
+          nudgePos(dir);
+          posHoldTimer = setTimeout(function () {
+            posHoldInterval = setInterval(function () { nudgePos(dir); }, 90);
+          }, 350);
+        }
+        function stop() {
+          clearTimeout(posHoldTimer); clearInterval(posHoldInterval);
+        }
+        btn.addEventListener('mousedown', start);
+        btn.addEventListener('mouseup', stop);
+        btn.addEventListener('mouseleave', stop);
+        btn.addEventListener('touchstart', start, { passive: false });
+        btn.addEventListener('touchend', stop);
+      });
+      posReset.addEventListener('click', function () {
+        posOffsetX = 0; posOffsetY = 0;
+        applyPosOffset();
       });
     })();
 
@@ -1542,6 +2014,7 @@
             bufferBar.style.width = (end / video.duration * 100) + '%';
           }
         });
+        video.addEventListener('volumechange', syncVolume);
 
         /* Seek bar */
         let dragging = false;
@@ -1611,6 +2084,7 @@
           video.muted = val === 0;
           applyBoostToAll();
           updateVolIcon();
+          syncVolume();
           renderVolTrack(val);
         }
         muteBtn.addEventListener('click', function (e) {
@@ -1850,6 +2324,7 @@
           if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
           if (e.ctrlKey || e.altKey || e.metaKey) return;
           if (isLocked) return;
+          if (isPreparingAudio || isPreparingSubtitle) return;
 
           switch (e.key) {
             case ' ':
@@ -1874,6 +2349,7 @@
               volumeBoost = Math.max(volumeBoost, 1);
               renderVolTrack(video.volume);
               updateVolIcon();
+              syncVolume();
               showUI(true);
               break;
             case 'ArrowDown':
@@ -1882,6 +2358,7 @@
               if (video.volume === 0) video.muted = true;
               renderVolTrack(video.volume);
               updateVolIcon();
+              syncVolume();
               showUI(true);
               break;
             case 'm':
@@ -1889,6 +2366,7 @@
               e.preventDefault();
               video.muted = !video.muted;
               updateVolIcon();
+              syncVolume();
               showUI(true);
               break;
             case 'f':
@@ -1916,6 +2394,27 @@
         showUI(false);
       })();
 
+      requestAnimationFrame(paintCue);
+
+      document.addEventListener('keydown', function (e) {
+        if (!isPreparingAudio && !isPreparingSubtitle) return;
+        const key = e.key.toLowerCase();
+        if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') { e.preventDefault(); e.stopPropagation(); }
+      }, true);
+
+      cachedFetchText(buildTracksUrl())
+        .then(function (text) { renderAudioList(JSON.parse(text)); })
+        .catch(function () { renderAudioList([]); });
+
+      const hasNativeSubtitles = renderNativeSubtitleList();
+      if (hasNativeSubtitles) {
+        subMode = 'list';
+      } else {
+        cachedFetchText(buildSubtitleTracksUrl())
+          .then(function (text) { renderSubtitleList(JSON.parse(text)); })
+          .catch(function () { renderSubtitleList([]); });
+      }
+
       const vid = getVideo();
       if (!vid) return;
 
@@ -1924,15 +2423,70 @@
       buffering = vid.readyState < 3;
       updateLoadingUI();
 
-      // Native audio/subtitle tracks aren't populated until metadata loads
-      // (and sometimes are already available if metadata loaded before this
-      // script ran), so check both here and on the event.
-      function detectNativeTracks() {
-        renderAudioList();
-        renderSubtitleList();
-      }
-      if (vid.readyState >= 1) detectNativeTracks();
-      vid.addEventListener('loadedmetadata', detectNativeTracks);
+      vid.addEventListener('loadedmetadata', function () {
+        if (vid.audioTracks && vid.audioTracks.length > 1 && !nativeAudioTracks) {
+          renderAudioList(null);
+        }
+        if (!nativeSubtitleTracks) renderNativeSubtitleList();
+      });
+
+      vid.addEventListener('play', function () {
+        if (isPreparingAudio || isPreparingSubtitle) {
+          playAfterPrepare = true;
+          playAfterSubPrepare = true;
+          vid.pause();
+          updateLoadingUI();
+        }
+      });
+      vid.addEventListener('pause', function () { if (activeAudio && !isPreparingAudio) activeAudio.pause(); });
+      vid.addEventListener('ratechange', function () { if (activeAudio) activeAudio.playbackRate = vid.playbackRate; });
+      vid.addEventListener('seeking', function () { if (activeAudio && !activeAudio.paused) activeAudio.pause(); });
+      vid.addEventListener('seeked', function () {
+        if (activeTrackIdx !== null && !isPreparingAudio) {
+          const t = getVideo().currentTime;
+          const alreadyCovered = t >= audioAnchor && t < windowEnd() - ROLLOVER_LEAD;
+          if (!alreadyCovered) {
+            dropNext();
+            if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
+            seekDebounceTimer = setTimeout(function () {
+              if (activeTrackIdx === null) return;
+              requestAudio(activeTrackIdx, getVideo().currentTime);
+            }, 400);
+          } else if (activeAudio) {
+            activeAudio.currentTime = audioAnchor === 0 ? t : (t - audioAnchor);
+            if (!vid.paused) activeAudio.play().catch(function () {});
+          }
+        }
+
+        if (activeSubIndex !== null && !isPreparingSubtitle) {
+          const t2 = vid.currentTime;
+          const subCovered = t2 >= subWindowStart && t2 < subWindowEnd - 30;
+          if (!subCovered) {
+            loadSubtitleWindow(activeSubIndex, t2);
+          }
+        }
+      });
+
+      setInterval(function () {
+        if (!activeAudio || isPreparingAudio) return;
+        if (vid.paused || vid.seeking || vid.readyState < 3) { if (!activeAudio.paused) activeAudio.pause(); return; }
+        if (vid.currentTime > windowEnd() - ROLLOVER_LEAD) prefetchNext();
+        if (nextReady && vid.currentTime >= nextAnchor - SEAM_LEAD) { promoteNext(); return; }
+        const expected = vid.currentTime - audioAnchor;
+        if (activeAudio.paused) {
+          if (activeAudio.ended) { requestAudio(activeTrackIdx, vid.currentTime); return; }
+          activeAudio.play().catch(function () {});
+          return;
+        }
+        const rate = vid.playbackRate || 1;
+        const drift = activeAudio.currentTime - expected;
+        window.__sync = { video: vid.currentTime, anchor: audioAnchor, drift: drift };
+        if (Math.abs(drift) > REFETCH_DRIFT) { requestAudio(activeTrackIdx, vid.currentTime); return; }
+        if (Math.abs(drift) > 0.04) {
+          const lo = rate * 0.95, hi = rate * 1.05;
+          activeAudio.playbackRate = Math.min(hi, Math.max(lo, rate - drift * 0.4));
+        } else if (activeAudio.playbackRate !== rate) { activeAudio.playbackRate = rate; }
+      }, 100);
     });
   </script>
 </body>
