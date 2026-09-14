@@ -1225,52 +1225,38 @@
       }
     }
 
-    function renderAudioList(tracks) {
+    function renderAudioList() {
       const btn = document.getElementById('btnAudio');
       const panel = document.getElementById('audioPanel');
-      btn.classList.add('show');
-
       const vid = getVideo();
-      if (vid && vid.audioTracks && vid.audioTracks.length > 1) {
-        // Free path: browser exposes the muxed-in tracks directly, so
-        // switching costs zero extra bandwidth — nothing new to fetch.
-        nativeAudioTracks = true;
-        audioMode = 'list';
+      const tracks = vid && vid.audioTracks;
+
+      // Native-only: no separate /audio/ requests are made.
+      if (!tracks || tracks.length < 2) {
+        audioMode = 'none';
         panel.innerHTML = '';
-        for (let i = 0; i < vid.audioTracks.length; i++) {
-          const t = vid.audioTracks[i];
-          const item = document.createElement('div');
-          item.className = 'lang-item' + (vid.audioTracks[i].enabled ? ' active' : '');
-          item.dataset.index = i;
-          item.textContent = t.label || t.language || ('Track ' + (i + 1));
-          item.onclick = function () {
-            switchNativeAudioTrack(i);
-            document.querySelectorAll('#audioPanel .lang-item').forEach(function (el) {
-              el.classList.toggle('active', el.dataset.index === String(i));
-            });
-          };
-          panel.appendChild(item);
-        }
         return;
       }
 
-      // Fallback path: browser can't expose/switch muxed tracks natively,
-      // so use the separate /audio/ fetch (costs bandwidth per switch).
-      if (!tracks || tracks.length < 2) { audioMode = 'none'; panel.innerHTML = ''; return; }
+      nativeAudioTracks = true;
       audioMode = 'list';
+      btn.classList.add('show');
       panel.innerHTML = '';
-      tracks.forEach(function (track, idx) {
+
+      for (let i = 0; i < tracks.length; i++) {
+        const track = tracks[i];
         const item = document.createElement('div');
-        item.className = 'lang-item' + (idx === 0 ? ' active' : '');
-        item.dataset.index = idx === 0 ? 'default' : track.index;
-        item.textContent = trackLabel(track);
+        item.className = 'lang-item' + (track.enabled ? ' active' : '');
+        item.dataset.index = i;
+        item.textContent = track.label || track.language || ('Track ' + (i + 1));
         item.onclick = function () {
-          if (idx === 0) { if (activeTrackIdx !== null) switchToDefault(); return; }
-          if (activeTrackIdx === track.index) return;
-          requestAudio(track.index);
+          switchNativeAudioTrack(i);
+          document.querySelectorAll('#audioPanel .lang-item').forEach(function (el) {
+            el.classList.toggle('active', el.dataset.index === String(i));
+          });
         };
         panel.appendChild(item);
-      });
+      }
     }
 
     function switchNativeSubtitleTrack(index) {
@@ -1314,31 +1300,38 @@
       return true;
     }
 
-    function renderSubtitleList(tracks) {
-      if (nativeSubtitleTracks) return;
+    function renderSubtitleList() {
       const btn = document.getElementById('btnSubs');
       const list = document.getElementById('subsLangList');
-      btn.classList.add('show');
+      const vid = getVideo();
+      const tracks = vid && vid.textTracks;
 
+      // Native-only: no subtitle metadata or /sub/ requests are made.
       if (!tracks || tracks.length === 0) {
         subMode = 'none';
-        list.innerHTML = '<div style="color:var(--muted);font-size:.85rem;padding:8px 0;">No subtitles found in this file.</div>';
+        list.innerHTML = '';
         return;
       }
 
+      nativeSubtitleTracks = true;
       subMode = 'list';
+      btn.classList.add('show');
       list.innerHTML = '';
 
-      tracks.forEach(function (track) {
+      for (let i = 0; i < tracks.length; i++) {
+        const track = tracks[i];
         const item = document.createElement('div');
         item.className = 'lang-item';
-        item.dataset.index = track.index;
-        item.textContent = trackLabel(track);
+        item.dataset.index = i;
+        item.textContent = track.label || track.language || ('Track ' + (i + 1));
         item.onclick = function () {
-          loadSubtitleWindow(track.index, getVideo() ? getVideo().currentTime : 0);
+          switchNativeSubtitleTrack(i);
+          document.querySelectorAll('#subsLangList .lang-item').forEach(function (el) {
+            el.classList.toggle('active', String(el.dataset.index) === String(i));
+          });
         };
         list.appendChild(item);
-      });
+      }
     }
 
     function toggleInline(btn, panel, others) {
@@ -2402,18 +2395,9 @@
         if (key === 'arrowleft' || key === 'arrowright' || key === 'j' || key === 'l') { e.preventDefault(); e.stopPropagation(); }
       }, true);
 
-      cachedFetchText(buildTracksUrl())
-        .then(function (text) { renderAudioList(JSON.parse(text)); })
-        .catch(function () { renderAudioList([]); });
-
-      const hasNativeSubtitles = renderNativeSubtitleList();
-      if (hasNativeSubtitles) {
-        subMode = 'list';
-      } else {
-        cachedFetchText(buildSubtitleTracksUrl())
-          .then(function (text) { renderSubtitleList(JSON.parse(text)); })
-          .catch(function () { renderSubtitleList([]); });
-      }
+      // Native-only: track lists come exclusively from the media element.
+      renderAudioList();
+      renderSubtitleList();
 
       const vid = getVideo();
       if (!vid) return;
@@ -2424,10 +2408,8 @@
       updateLoadingUI();
 
       vid.addEventListener('loadedmetadata', function () {
-        if (vid.audioTracks && vid.audioTracks.length > 1 && !nativeAudioTracks) {
-          renderAudioList(null);
-        }
-        if (!nativeSubtitleTracks) renderNativeSubtitleList();
+        renderAudioList();
+        renderSubtitleList();
       });
 
       vid.addEventListener('play', function () {
