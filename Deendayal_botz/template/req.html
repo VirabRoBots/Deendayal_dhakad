@@ -636,14 +636,11 @@
     <footer>© Cinemaniacs Hub · For personal use only</footer>
   </div>
 
-  <!-- Google Cast SDK -->
-  <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
-
   <script>
     const STREAM_URL = "{{file_url}}";
-    const AUDIO_WINDOW_SECONDS = 600;
-    const SUBTITLE_WINDOW_SECONDS = 600;
-    const ROLLOVER_LEAD = 45;
+    const AUDIO_WINDOW_SECONDS = 180;
+    const SUBTITLE_WINDOW_SECONDS = 180;
+    const ROLLOVER_LEAD = 20;
     const REFETCH_DRIFT = 1.5;
     const SEAM_LEAD = 0.25;
 
@@ -822,15 +819,11 @@
 
     function paintCue() {
       const vid = getVideo();
-      if (!subsEnabled || !vid || subCues.length === 0) {
-        requestAnimationFrame(paintCue);
-        return;
-      }
+      if (!subsEnabled || !vid || subCues.length === 0) return;
       const t = vid.currentTime;
 
       if (t > subWindowEnd - 30 && activeSubIndex !== null && !isPreparingSubtitle) {
         loadSubtitleWindow(activeSubIndex, Math.max(0, t - 5));
-        requestAnimationFrame(paintCue);
         return;
       }
 
@@ -857,8 +850,6 @@
       } else {
         overlay.classList.remove('active');
       }
-
-      requestAnimationFrame(paintCue);
     }
 
     const LANG_MAP = {
@@ -944,7 +935,17 @@
     }
     function silenceVideo(vid) { initAudioContext(vid); if (useFallbackMute) { if (vid) vid.muted = true; return; } if (vidGainNode) vidGainNode.gain.value = 0; }
     function restoreVideoAudio(vid) { if (useFallbackMute) { if (vid) vid.muted = false; return; } if (vidGainNode) vidGainNode.gain.value = volumeBoost; }
-    function killAudioEl(el) { if (!el) return; try { el.pause(); el.removeAttribute('src'); el.load(); el.remove(); } catch (e) {} }
+    function killAudioEl(el) {
+      if (!el) return;
+      try {
+        if (el.__boostGain) { try { el.__boostGain.disconnect(); } catch (e) {} el.__boostGain = null; }
+        if (el.__srcNode) { try { el.__srcNode.disconnect(); } catch (e) {} el.__srcNode = null; }
+        el.pause();
+        el.removeAttribute('src');
+        el.load();
+        el.remove();
+      } catch (e) {}
+    }
     function destroyAudio() { killAudioEl(activeAudio); activeAudio = null; }
     function activate(el, anchor) {
       activeAudio = el; audioAnchor = anchor;
@@ -974,6 +975,7 @@
         gain.gain.value = volumeBoost;
         src.connect(gain);
         gain.connect(audioCtx.destination);
+        el.__srcNode = src;
         el.__boostGain = gain;
         return gain;
       } catch (e) { return null; }
@@ -1336,6 +1338,11 @@
       const castConnectedIcon = '<svg viewBox="0 0 24 24"><path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm18-7H3v2h16v10h-7v2h7c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zM1 10v2c4.97 0 9 4.03 9 9h2c0-6.08-4.93-11-11-11z"/></svg>';
 
       castBtn.innerHTML = castIcon;
+
+      // Load Google's Cast SDK only for browsers where it can actually work —
+      // no point shipping/parsing/holding this in memory for every visitor.
+      const castScript = document.createElement('script');
+      castScript.src = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';
       // Button starts hidden (see CSS #castBtn{display:none}). It's revealed only in
       // the __onGCastApiAvailable(true) branch below — i.e. only when the browser
       // actually has a working Cast route. If that callback never fires (Samsung
@@ -1391,6 +1398,9 @@
           }
         );
       };
+
+      // Callback is registered above — safe to start loading the SDK now.
+      document.head.appendChild(castScript);
 
       castBtn.addEventListener('click', function (e) {
         e.stopPropagation();
@@ -1893,7 +1903,7 @@
         showUI(false);
       })();
 
-      requestAnimationFrame(paintCue);
+      setInterval(paintCue, 150);
 
       document.addEventListener('keydown', function (e) {
         if (!isPreparingAudio && !isPreparingSubtitle) return;
@@ -1931,17 +1941,34 @@
       vid.addEventListener('ratechange', function () { if (activeAudio) activeAudio.playbackRate = vid.playbackRate; });
       vid.addEventListener('seeking', function () { if (activeAudio && !activeAudio.paused) activeAudio.pause(); });
       vid.addEventListener('seeked', function () {
+        const t = vid.currentTime;
+
         if (activeTrackIdx !== null && !isPreparingAudio) {
-          dropNext();
-          if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
-          seekDebounceTimer = setTimeout(function () {
-            if (activeTrackIdx === null) return;
-            requestAudio(activeTrackIdx, getVideo().currentTime);
-          }, 400);
+          if (t >= audioAnchor && t < windowEnd()) {
+            // Seek landed inside the audio chunk we already have loaded —
+            // just reposition it instead of re-downloading the whole window.
+            if (seekDebounceTimer) { clearTimeout(seekDebounceTimer); seekDebounceTimer = null; }
+            if (activeAudio) {
+              activeAudio.currentTime = t - audioAnchor;
+              if (!vid.paused && activeAudio.paused) activeAudio.play().catch(function () {});
+            }
+          } else {
+            dropNext();
+            if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
+            seekDebounceTimer = setTimeout(function () {
+              if (activeTrackIdx === null) return;
+              requestAudio(activeTrackIdx, getVideo().currentTime);
+            }, 400);
+          }
         }
 
         if (activeSubIndex !== null && !isPreparingSubtitle) {
-          loadSubtitleWindow(activeSubIndex, vid.currentTime);
+          if (t < subWindowStart || t >= subWindowEnd) {
+            // Only reload subtitles if we've actually seeked outside the
+            // currently-loaded window; otherwise the existing cues already
+            // cover this position and paintCue() will pick it up on its own.
+            loadSubtitleWindow(activeSubIndex, t);
+          }
         }
       });
 
@@ -1958,7 +1985,6 @@
         }
         const rate = vid.playbackRate || 1;
         const drift = activeAudio.currentTime - expected;
-        window.__sync = { video: vid.currentTime, anchor: audioAnchor, drift: drift };
         if (Math.abs(drift) > REFETCH_DRIFT) { requestAudio(activeTrackIdx, vid.currentTime); return; }
         if (Math.abs(drift) > 0.04) {
           const lo = rate * 0.95, hi = rate * 1.05;
